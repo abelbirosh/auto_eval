@@ -124,3 +124,69 @@ def test_a_spec_that_arrives_claiming_readiness_is_re_checked(client, monkeypatc
 
     monkeypatch.setattr(web, "identify", lambda spec, **kw: None)
     assert client.post("/api/ground-truth", json={"spec": payload}).status_code == 409
+
+
+def test_extract_returns_the_cases_and_the_document(client, monkeypatch, full_spec):
+    from auto_eval.extraction import GroundTruthExample, GroundTruthSet, Origin
+    from auto_eval.ground_truth import Availability, GroundTruthReport
+
+    captured = {}
+
+    def fake_extract(spec, report, **kwargs):
+        captured["subject"] = spec.subject.name
+        captured["sources"] = len(report.sources)
+        captured.update(kwargs)
+        return GroundTruthSet(
+            subject=spec.subject.name,
+            examples=[
+                GroundTruthExample(
+                    input="TOTAL DUE 412.55",
+                    expected="412.55",
+                    source="Acme",
+                    url="https://huggingface.co/datasets/acme/invoices",
+                    origin=Origin.DATASET_ROWS,
+                )
+            ],
+        )
+
+    monkeypatch.setattr(web, "extract", fake_extract)
+
+    report = GroundTruthReport(
+        subject="invoice extractor", verdict=Availability.LABELLED_DATA
+    )
+    response = client.post(
+        "/api/extract",
+        json={
+            "spec": analyze(full_spec).model_dump(mode="json"),
+            "report": report.model_dump(mode="json"),
+            "max_examples": 5,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert captured["subject"] == "invoice extractor"
+    assert captured["max_examples"] == 5
+    assert body["found"]["examples"][0]["expected"] == "412.55"
+    assert "Extracted ground truth" in body["markdown"]
+
+
+def test_extraction_errors_become_readable_400s(client, monkeypatch, full_spec):
+    from auto_eval.ground_truth import Availability, GroundTruthError, GroundTruthReport
+
+    def boom(spec, report, **kwargs):
+        raise GroundTruthError("Rate limited or out of quota.")
+
+    monkeypatch.setattr(web, "extract", boom)
+
+    response = client.post(
+        "/api/extract",
+        json={
+            "spec": analyze(full_spec).model_dump(mode="json"),
+            "report": GroundTruthReport(
+                subject="x", verdict=Availability.NONE_FOUND
+            ).model_dump(mode="json"),
+        },
+    )
+    assert response.status_code == 400
+    assert "Rate limited" in response.json()["detail"]

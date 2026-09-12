@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
+from .extraction import GroundTruthSet, Outcome
 from .ground_truth import Availability, Coverage, GroundTruthReport
 from .schema import EvidenceStatus, Readiness, TaskSpec
 
@@ -26,6 +27,18 @@ COVERAGE_MARK = {
     Coverage.REFERENCE: "reference only",
     Coverage.NONE: "nothing found",
 }
+
+OUTCOME_MARK = {
+    Outcome.EXTRACTED: "extracted",
+    Outcome.NOTHING_FOUND: "nothing in it",
+    Outcome.UNREACHABLE: "could not read",
+    Outcome.UNUSABLE: "not usable",
+    Outcome.SKIPPED: "skipped",
+}
+
+# Ground truth can be long - a dataset row carries a whole passage. The files
+# hold it in full; the document shows enough to recognise it.
+PREVIEW_CHARS = 300
 
 STATUS_MARK = {
     EvidenceStatus.PROVIDED: "have it",
@@ -224,4 +237,87 @@ def render_ground_truth(report: GroundTruthReport) -> str:
     return "\n".join(lines)
 
 
-__all__ = ["render_ground_truth", "render_markdown", "render_questions"]
+def _preview(text: str) -> str:
+    flat = " ".join(text.split())
+    if len(flat) <= PREVIEW_CHARS:
+        return flat
+    return flat[:PREVIEW_CHARS].rstrip() + " […]"
+
+
+def render_ground_truth_set(found: GroundTruthSet) -> str:
+    """The extracted ground truth as a document. The data itself is in the files."""
+    lines: List[str] = [
+        f"# Extracted ground truth for {found.subject}",
+        "",
+        f"**Labelled cases:** {len(found.examples)}  ",
+        f"**Published baselines:** {len(found.baselines)}  ",
+        f"**Sources tried:** {len(found.outcomes)}",
+        "",
+    ]
+
+    if not found.usable:
+        lines += [
+            "Nothing survived extraction. What each source did is below - that is the "
+            "answer to what has to be labelled by hand.",
+            "",
+        ]
+
+    lines += ["## Labelled cases", ""]
+    if not found.examples:
+        lines += ["_None extracted._", ""]
+    else:
+        by_source: dict = {}
+        for example in found.examples:
+            by_source.setdefault(example.source, []).append(example)
+        for source, items in by_source.items():
+            first = items[0]
+            split = f", {first.split} split" if first.split else ""
+            lines += [
+                f"**{source}** — {len(items)} case(s), {first.origin.value}{split}",
+                "",
+                "| Input | Expected | KPI |",
+                "| --- | --- | --- |",
+            ]
+            for example in items:
+                lines.append(
+                    f"| {_preview(example.input)} | {_preview(example.expected)} | "
+                    f"{example.kpi or '—'} |"
+                )
+            lines.append("")
+
+    lines += ["## Published baselines", ""]
+    if not found.baselines:
+        lines += ["_None found._", ""]
+    else:
+        lines += ["| Metric | Value | System | As of | Source |", "| --- | --- | --- | --- | --- |"]
+        for baseline in found.baselines:
+            lines.append(
+                f"| {baseline.metric} | {baseline.value} | {baseline.system or '—'} | "
+                f"{baseline.as_of or '—'} | {baseline.source} |"
+            )
+        lines += ["", "**Quoted from**", ""]
+        for baseline in found.baselines:
+            lines.append(f"- {baseline.metric}: \"{_preview(baseline.quote)}\" — <{baseline.url}>")
+        lines.append("")
+
+    lines += [
+        "## What each source gave",
+        "",
+        "| Source | Result | Cases | Numbers | Discarded | Detail |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    for item in found.outcomes:
+        lines.append(
+            f"| {item.source} | {OUTCOME_MARK[item.outcome]} | {item.examples} | "
+            f"{item.baselines} | {item.discarded} | {item.detail} |"
+        )
+    lines += ["", "## Notes", "", *_bullets(found.notes, "none"), ""]
+    return "\n".join(lines)
+
+
+__all__ = [
+    "render_ground_truth",
+    "render_ground_truth_set",
+    "render_markdown",
+    "render_questions",
+]

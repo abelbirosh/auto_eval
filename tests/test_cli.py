@@ -74,3 +74,75 @@ def test_ground_truth_reads_a_spec_file_and_prints_the_report(
     assert main(["ground-truth", "-s", str(spec_file), "--md", str(out)]) == EXIT_OK
     assert "Ground truth for invoice extractor" in capsys.readouterr().out
     assert "Label your own." in out.read_text()
+
+
+def test_extract_flags_are_parsed():
+    args = build_parser().parse_args(
+        ["ground-truth", "-s", "s.json", "--extract", "--max-examples", "5", "--out-dir", "data"]
+    )
+    assert args.extract is True
+    assert args.max_examples == 5
+    assert args.out_dir == "data"
+
+
+def test_extracted_cases_are_written_where_a_harness_can_load_them(
+    tmp_path, full_spec, capsys, monkeypatch
+):
+    from auto_eval import cli
+    from auto_eval.extraction import GroundTruthExample, GroundTruthSet, Origin
+    from auto_eval.gaps import analyze
+    from auto_eval.ground_truth import SourceFindings, assess
+
+    spec_file = tmp_path / "spec.json"
+    spec_file.write_text(analyze(full_spec).model_dump_json())
+    out_dir = tmp_path / "data"
+
+    monkeypatch.setattr(
+        cli, "identify", lambda spec, **kw: assess(spec, SourceFindings(recommendation="x"))
+    )
+    monkeypatch.setattr(
+        cli,
+        "extract",
+        lambda spec, report, **kw: GroundTruthSet(
+            subject=spec.subject.name,
+            examples=[
+                GroundTruthExample(
+                    input="TOTAL DUE 412.55",
+                    expected="412.55",
+                    source="Acme",
+                    url="https://huggingface.co/datasets/acme/invoices",
+                    origin=Origin.DATASET_ROWS,
+                )
+            ],
+        ),
+    )
+
+    assert main(["ground-truth", "-s", str(spec_file), "--extract", "--out-dir", str(out_dir)]) == EXIT_OK
+
+    lines = (out_dir / "examples.jsonl").read_text().splitlines()
+    assert json.loads(lines[0])["expected"] == "412.55"
+    assert json.loads((out_dir / "baselines.json").read_text()) == []
+    assert "Extracted ground truth" in (out_dir / "ground-truth.md").read_text()
+    assert "Extracted ground truth" in capsys.readouterr().out
+
+
+def test_force_reaches_the_search_so_the_gate_does_not_refuse_twice(
+    tmp_path, sparse_spec, monkeypatch, capsys
+):
+    from auto_eval import cli
+    from auto_eval.gaps import analyze
+    from auto_eval.ground_truth import SourceFindings, assess
+
+    spec_file = tmp_path / "spec.json"
+    spec_file.write_text(analyze(sparse_spec).model_dump_json())
+
+    seen = {}
+
+    def fake_identify(spec, **kwargs):
+        seen.update(kwargs)
+        return assess(spec, SourceFindings(recommendation="x"))
+
+    monkeypatch.setattr(cli, "identify", fake_identify)
+
+    assert main(["ground-truth", "-s", str(spec_file), "--force"]) == EXIT_OK
+    assert seen["force"] is True

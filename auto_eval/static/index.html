@@ -147,6 +147,7 @@
 
   <section class="result" id="result" hidden></section>
   <section class="result" id="gtresult" hidden></section>
+  <section class="result" id="exresult" hidden></section>
 </div>
 
 <script>
@@ -176,6 +177,21 @@ function list(items, empty) {
 }
 
 let lastSpec = null;
+let lastReport = null;
+
+const OUTCOME = {
+  extracted: "extracted",
+  nothing_found: "nothing in it",
+  unreachable: "could not read",
+  unusable: "not usable",
+  skipped: "skipped",
+};
+
+const PREVIEW = 300;
+const preview = (t) => {
+  const flat = String(t ?? "").replace(/\s+/g, " ").trim();
+  return flat.length > PREVIEW ? flat.slice(0, PREVIEW).trimEnd() + " […]" : flat;
+};
 
 const COVERAGE = {
   labelled: "labelled data",
@@ -264,7 +280,9 @@ function render(data) {
          <div class="row"><button class="primary" id="gt">Find ground truth</button></div>`}`;
 
   lastSpec = s;
+  lastReport = null;
   $("gtresult").hidden = true;
+  $("exresult").hidden = true;
   const gtBtn = $("gt");
   if (gtBtn) gtBtn.onclick = groundTruth;
   $("result").hidden = false;
@@ -316,8 +334,96 @@ function renderReport(data) {
     <h2>Searches run</h2>${list(r.searches, "none recorded")}
 
     <details><summary>Report (markdown)</summary><pre>${esc(data.markdown)}</pre></details>
-    <details><summary>Raw JSON</summary><pre>${esc(JSON.stringify(r, null, 2))}</pre></details>`;
+    <details><summary>Raw JSON</summary><pre>${esc(JSON.stringify(r, null, 2))}</pre></details>
+
+    <h2>Extraction</h2>
+    ${r.sources.length
+      ? `<p>Fetch these sources and pull out the labelled cases themselves. Dataset rows
+         come straight from the dataset API; anything read off a page is checked back
+         against that page before it is kept.</p>
+         <div class="row"><button class="primary" id="ex">Extract ground truth</button></div>`
+      : `<p class="none">No sources to extract from.</p>`}`;
+
+  lastReport = r;
+  $("exresult").hidden = true;
+  const exBtn = $("ex");
+  if (exBtn) exBtn.onclick = runExtract;
   $("gtresult").hidden = false;
+}
+
+function renderSet(data) {
+  const f = data.found;
+
+  const cases = f.examples.length ? `<div class="scroll"><table>
+      <tr><th>Input</th><th>Expected</th><th>KPI</th><th>From</th></tr>
+      ${f.examples.map(e => `<tr>
+        <td>${esc(preview(e.input))}</td><td>${esc(preview(e.expected))}</td>
+        <td>${e.kpi ? esc(e.kpi) : "&mdash;"}</td>
+        <td>${esc(e.source)}<br><span class="why">${esc(e.origin.replace(/_/g, " "))}${
+          e.split ? " &middot; " + esc(e.split) : ""}</span></td></tr>`).join("")}
+    </table></div>`
+    : `<p class="none">No labelled cases extracted.</p>`;
+
+  const numbers = f.baselines.length ? `<div class="scroll"><table>
+      <tr><th>Metric</th><th>Value</th><th>System</th><th>As of</th><th>Quoted from</th></tr>
+      ${f.baselines.map(b => `<tr><td>${esc(b.metric)}</td><td>${esc(b.value)}</td>
+        <td>${b.system ? esc(b.system) : "&mdash;"}</td>
+        <td>${b.as_of ? esc(b.as_of) : "&mdash;"}</td>
+        <td>${esc(preview(b.quote))}<br><span class="why">${esc(b.source)}</span></td></tr>`).join("")}
+    </table></div>`
+    : `<p class="none">No published numbers survived checking.</p>`;
+
+  $("exresult").innerHTML = `
+    <div class="verdict">
+      <span class="badge ${f.examples.length || f.baselines.length ? "labelled_data" : "none_found"}">
+        ${f.examples.length} case(s)</span>
+      <strong>Extracted ground truth</strong>
+      <span class="meta">${f.baselines.length} baseline(s) &middot; ${f.outcomes.length} source(s) tried</span>
+    </div>
+
+    <h2>Labelled cases</h2>${cases}
+    <h2>Published baselines</h2>${numbers}
+
+    <h2>What each source gave</h2>
+    <div class="scroll"><table>
+      <tr><th>Source</th><th>Result</th><th>Cases</th><th>Numbers</th><th>Discarded</th><th>Detail</th></tr>
+      ${f.outcomes.map(o => `<tr><td>${esc(o.source)}</td>
+        <td>${esc(OUTCOME[o.outcome] || o.outcome)}</td><td>${o.examples}</td>
+        <td>${o.baselines}</td><td>${o.discarded}</td>
+        <td><span class="why">${esc(o.detail)}</span></td></tr>`).join("")}
+    </table></div>
+
+    <h2>Notes</h2>${list(f.notes, "none")}
+
+    <details><summary>Cases as JSONL</summary><pre>${esc(
+      f.examples.map(e => JSON.stringify(e)).join("\n") || "(none)")}</pre></details>
+    <details><summary>Report (markdown)</summary><pre>${esc(data.markdown)}</pre></details>`;
+  $("exresult").hidden = false;
+}
+
+async function runExtract() {
+  if (!lastSpec || !lastReport) return;
+  const btn = $("ex");
+  btn.disabled = true;
+  btn.textContent = "Fetching sources\u2026";
+  banner("", "");
+
+  try {
+    const r = await fetch("/api/extract", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ spec: lastSpec, report: lastReport }),
+    });
+    const body = await r.json();
+    if (!r.ok) { banner("err", body.detail || `Request failed (${r.status})`); return; }
+    renderSet(body);
+    $("exresult").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (e) {
+    banner("err", `Could not reach the server: ${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Extract ground truth";
+  }
 }
 
 async function groundTruth() {
@@ -378,7 +484,9 @@ $("clear").onclick = () => {
   $("input").value = "";
   $("result").hidden = true;
   $("gtresult").hidden = true;
+  $("exresult").hidden = true;
   lastSpec = null;
+  lastReport = null;
   banner("", "");
 };
 $("input").addEventListener("keydown", e => {

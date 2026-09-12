@@ -10,9 +10,15 @@ from typing import List, Optional
 
 from .classifier import DEFAULT_MAX_TOKENS, ClassifierError, classify, list_models
 from .config import DEFAULT_MODEL, get_settings
+from .extraction import DEFAULT_MAX_EXAMPLES, GroundTruthSet, extract, to_jsonl
 from .gaps import analyze
 from .ground_truth import GroundTruthReport, gate, identify
-from .render import render_ground_truth, render_markdown, render_questions
+from .render import (
+    render_ground_truth,
+    render_ground_truth_set,
+    render_markdown,
+    render_questions,
+)
 from .schema import Readiness, TaskSpec
 
 EXIT_OK = 0
@@ -60,11 +66,51 @@ def _cmd_classify(args: argparse.Namespace) -> int:
         if not decision.open:
             print(f"\nSkipping the ground-truth search: {decision.reason}", file=sys.stderr)
         else:
-            report = identify(spec, model=args.model, max_tokens=args.max_tokens)
             print()
-            print(_format_report(report, args.format))
+            _run_block(spec, args)
 
     return EXIT_INSUFFICIENT if spec.readiness is Readiness.INSUFFICIENT else EXIT_OK
+
+
+def _run_block(
+    spec: TaskSpec,
+    args: argparse.Namespace,
+    *,
+    report_json: Optional[str] = None,
+    report_md: Optional[str] = None,
+) -> None:
+    """Identify, optionally extract, and print and write whatever was asked for.
+
+    `report_json` and `report_md` are passed only by the `ground-truth` command,
+    whose --json and --md mean the report; on `classify` they mean the spec.
+    """
+    report = identify(
+        spec,
+        model=args.model,
+        max_tokens=args.max_tokens,
+        force=getattr(args, "force", False),
+    )
+
+    if report_json:
+        Path(report_json).write_text(report.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    if report_md:
+        Path(report_md).write_text(render_ground_truth(report) + "\n", encoding="utf-8")
+
+    print(_format_report(report, args.format))
+
+    if not args.extract:
+        return
+
+    found = extract(spec, report, model=args.model, max_examples=args.max_examples)
+    print()
+    print(
+        found.model_dump_json(indent=2)
+        if args.format == "json"
+        else render_ground_truth_set(found)
+    )
+    if args.out_dir:
+        for line in _write_set(found, Path(args.out_dir)):
+            print(line, file=sys.stderr)
 
 
 def _format_report(report: GroundTruthReport, fmt: str) -> str:
@@ -95,24 +141,35 @@ def _cmd_ground_truth(args: argparse.Namespace) -> int:
         print(render_questions(spec), file=sys.stderr)
         return EXIT_INSUFFICIENT
 
-    report = identify(
-        spec, model=args.model, max_tokens=args.max_tokens, force=args.force
-    )
-
-    if args.json:
-        Path(args.json).write_text(
-            report.model_dump_json(indent=2) + "\n", encoding="utf-8"
-        )
-    if args.md:
-        Path(args.md).write_text(render_ground_truth(report) + "\n", encoding="utf-8")
-
-    print(_format_report(report, args.format))
+    _run_block(spec, args, report_json=args.json, report_md=args.md)
 
     if args.json or args.md:
         written = " and ".join(p for p in (args.md, args.json) if p)
         print(f"\nWrote {written}", file=sys.stderr)
 
     return EXIT_OK
+
+
+def _write_set(found: GroundTruthSet, out_dir: Path) -> List[str]:
+    """Write the cases where a harness can load them, one file per kind."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written = []
+
+    cases = out_dir / "examples.jsonl"
+    cases.write_text(to_jsonl(found.examples) + "\n" if found.examples else "", encoding="utf-8")
+    written.append(f"Wrote {len(found.examples)} case(s) to {cases}")
+
+    baselines = out_dir / "baselines.json"
+    baselines.write_text(
+        json.dumps([b.model_dump() for b in found.baselines], indent=2) + "\n",
+        encoding="utf-8",
+    )
+    written.append(f"Wrote {len(found.baselines)} baseline(s) to {baselines}")
+
+    document = out_dir / "ground-truth.md"
+    document.write_text(render_ground_truth_set(found) + "\n", encoding="utf-8")
+    written.append(f"Wrote {document}")
+    return written
 
 
 def _cmd_serve(args: argparse.Namespace) -> int:
@@ -138,6 +195,26 @@ def _cmd_schema(args: argparse.Namespace) -> int:
     else:
         print(schema)
     return EXIT_OK
+
+
+def _add_extraction_flags(parser: argparse.ArgumentParser) -> None:
+    """Shared by both commands that can run the ground-truth block."""
+    parser.add_argument(
+        "--extract",
+        action="store_true",
+        help="Fetch the identified sources and pull the labelled cases out of them.",
+    )
+    parser.add_argument(
+        "--max-examples",
+        type=int,
+        default=DEFAULT_MAX_EXAMPLES,
+        help=f"Cases to extract at most. Default {DEFAULT_MAX_EXAMPLES}.",
+    )
+    parser.add_argument(
+        "--out-dir",
+        metavar="PATH",
+        help="Write examples.jsonl, baselines.json, and the report here.",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -180,6 +257,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Search for public ground truth afterwards, if nothing is blocking.",
     )
+    _add_extraction_flags(classify_cmd)
     classify_cmd.set_defaults(func=_cmd_classify)
 
     gt_cmd = sub.add_parser(
@@ -188,8 +266,9 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Takes a spec written by `classify --json`, or classifies a request first. "
             "Searches the web for labelled datasets, benchmarks, and published "
-            f"baselines. Exits {EXIT_INSUFFICIENT} without searching while the spec "
-            "still has blocking questions."
+            "baselines; --extract then fetches them and pulls out the cases. "
+            f"Exits {EXIT_INSUFFICIENT} without searching while the spec still has "
+            "blocking questions."
         ),
     )
     gt_cmd.add_argument("text", nargs="*", help="The request, as text.")
@@ -215,6 +294,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Search even while blocking questions are open.",
     )
+    _add_extraction_flags(gt_cmd)
     gt_cmd.set_defaults(func=_cmd_ground_truth)
 
     serve_cmd = sub.add_parser(

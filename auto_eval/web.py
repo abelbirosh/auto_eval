@@ -14,9 +14,10 @@ from pydantic import BaseModel, Field
 
 from .classifier import DEFAULT_MAX_TOKENS, ClassifierError, classify
 from .config import Settings, get_settings
+from .extraction import DEFAULT_MAX_EXAMPLES, GroundTruthSet, extract
 from .gaps import analyze
 from .ground_truth import GroundTruthReport, gate, identify
-from .render import render_ground_truth, render_markdown
+from .render import render_ground_truth, render_ground_truth_set, render_markdown
 from .schema import TaskSpec
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -40,6 +41,18 @@ class GroundTruthRequest(BaseModel):
 
 class GroundTruthResponse(BaseModel):
     report: GroundTruthReport
+    markdown: str
+
+
+class ExtractRequest(BaseModel):
+    spec: TaskSpec
+    report: GroundTruthReport = Field(description="A report returned by /api/ground-truth.")
+    model: Optional[str] = None
+    max_examples: int = DEFAULT_MAX_EXAMPLES
+
+
+class ExtractResponse(BaseModel):
+    found: GroundTruthSet
     markdown: str
 
 
@@ -96,6 +109,25 @@ def create_app():
 
         return GroundTruthResponse(report=report, markdown=render_ground_truth(report))
 
+    @app.post("/api/extract", response_model=ExtractResponse)
+    def extract_endpoint(request: ExtractRequest):
+        """Fetch the identified sources and pull the labelled cases out of them.
+
+        This is the one endpoint that reaches out to URLs the model proposed;
+        `auto_eval.fetch` refuses anything that is not a public http(s) address.
+        """
+        try:
+            found = extract(
+                request.spec,
+                request.report,
+                model=request.model,
+                max_examples=request.max_examples,
+            )
+        except ClassifierError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return ExtractResponse(found=found, markdown=render_ground_truth_set(found))
+
     return app
 
 
@@ -121,6 +153,8 @@ def serve(host: str = "127.0.0.1", port: int = 8000, reload: bool = False) -> No
 __all__ = [
     "ClassifyRequest",
     "ClassifyResponse",
+    "ExtractRequest",
+    "ExtractResponse",
     "GroundTruthRequest",
     "GroundTruthResponse",
     "create_app",
