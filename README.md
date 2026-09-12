@@ -25,9 +25,9 @@ mypy
 first place a lint failure shows up.
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the same three
-commands on every push and pull request, tests against Python 3.10 through 3.14,
-and builds the wheel to check the CLI and the packaged UI still work from a
-clean install.
+commands on every push and pull request, tests on 3.10 and 3.14 - the ends of
+the supported range - and builds the wheel to check the CLI and the packaged UI
+still work from a clean install.
 
 Releases ([`.github/workflows/release.yml`](.github/workflows/release.yml)) are
 cut by pushing a `vX.Y.Z` tag that matches `version` in `pyproject.toml`; the
