@@ -21,11 +21,21 @@ question rather than a guess, and a spec with a blocking hole is reported as
 pip install -e ".[dev]"
 ```
 
-Classification calls the Claude API, so set a credential:
+Classification calls the OpenAI API. Copy the example env file and paste your
+key into it:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...
+cp .env.example .env
 ```
+
+```
+OPENAI_API_KEY=sk-proj-...
+```
+
+`.env` is gitignored. An exported `OPENAI_API_KEY` takes precedence over the
+file, so a shell export still works if you prefer that. Two optional settings
+live there too: `AUTO_EVAL_MODEL` to change the model, and `AUTO_EVAL_BASE_URL`
+to point at an OpenAI-compatible endpoint.
 
 ## Use
 
@@ -45,7 +55,7 @@ auto-eval classify -f examples/request.txt --md task.md --json task.json --quest
 
 `classify` exits `0` when the spec is usable and `2` when it has blocking
 questions, so a pipeline can gate on it. `auto-eval schema` prints the JSON
-schema for `TaskSpec`.
+schema for `TaskSpec`, and `auto-eval models` lists the models your key can use.
 
 From Python:
 
@@ -59,9 +69,14 @@ print(render_markdown(spec))
 
 ## How it works
 
-Classification runs on `claude-haiku-4-5` via structured outputs — it's an
-extraction task on a short input that runs on every request. Override with
-`--model` if specs come back thin.
+Classification runs on `gpt-5-mini` via structured outputs — it's an extraction
+task on a short input that runs on every request, so it goes to the cheap tier.
+Override with `--model` or `AUTO_EVAL_MODEL` if specs come back thin, and run
+`auto-eval models` to see what your key can actually reach.
+
+Because OpenAI's strict mode makes every field required, the model must emit all
+twelve top-level fields rather than omitting the ones it found nothing for. An
+empty `kpis` list means "found nothing", and the gap rules treat it as such.
 
 The model extracts; it does not judge completeness. `auto_eval.gaps` recomputes
 the open questions and the readiness verdict from rules after every
@@ -79,7 +94,8 @@ the classifier is classified, not obeyed.
 | --- | --- |
 | [auto_eval/schema.py](auto_eval/schema.py) | `TaskSpec` and friends — the contract everything downstream reads. |
 | [auto_eval/prompts.py](auto_eval/prompts.py) | The extraction system prompt. |
-| [auto_eval/classifier.py](auto_eval/classifier.py) | The Haiku call, error mapping, input limits. |
+| [auto_eval/config.py](auto_eval/config.py) | `.env` loading and provider settings. |
+| [auto_eval/classifier.py](auto_eval/classifier.py) | The API call, error mapping, input limits. |
 | [auto_eval/gaps.py](auto_eval/gaps.py) | Rule-based gap analysis and the readiness verdict. |
 | [auto_eval/render.py](auto_eval/render.py) | `TaskSpec` → task document. |
 | [auto_eval/cli.py](auto_eval/cli.py) | The `auto-eval` command. |

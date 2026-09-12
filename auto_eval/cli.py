@@ -8,7 +8,8 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from .classifier import DEFAULT_MODEL, ClassifierError, classify
+from .classifier import DEFAULT_MAX_TOKENS, ClassifierError, classify, list_models
+from .config import DEFAULT_MODEL, get_settings
 from .render import render_markdown, render_questions
 from .schema import Readiness, TaskSpec
 
@@ -31,7 +32,7 @@ def _read_input(args: argparse.Namespace) -> str:
 
 def _cmd_classify(args: argparse.Namespace) -> int:
     text = _read_input(args)
-    spec = classify(text, model=args.model)
+    spec = classify(text, model=args.model, max_tokens=args.max_tokens)
 
     if args.json:
         Path(args.json).write_text(
@@ -52,6 +53,14 @@ def _cmd_classify(args: argparse.Namespace) -> int:
         print(f"\nWrote {written}", file=sys.stderr)
 
     return EXIT_INSUFFICIENT if spec.readiness is Readiness.INSUFFICIENT else EXIT_OK
+
+
+def _cmd_models(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    for model_id in list_models():
+        marker = "  <- current" if model_id == settings.model else ""
+        print(f"{model_id}{marker}")
+    return EXIT_OK
 
 
 def _cmd_schema(args: argparse.Namespace) -> int:
@@ -82,7 +91,12 @@ def build_parser() -> argparse.ArgumentParser:
     classify_cmd.add_argument("text", nargs="*", help="The request, as text.")
     classify_cmd.add_argument("-f", "--file", help="Read the request from a file.")
     classify_cmd.add_argument(
-        "--model", default=DEFAULT_MODEL, help=f"Model to classify with (default: {DEFAULT_MODEL})."
+        "--model",
+        default=None,
+        help=f"Model to classify with. Defaults to AUTO_EVAL_MODEL, else {DEFAULT_MODEL}.",
+    )
+    classify_cmd.add_argument(
+        "--max-tokens", type=int, default=DEFAULT_MAX_TOKENS, help="Output token cap."
     )
     classify_cmd.add_argument(
         "--format", choices=["markdown", "json"], default="markdown", help="Stdout format."
@@ -95,6 +109,11 @@ def build_parser() -> argparse.ArgumentParser:
     classify_cmd.add_argument("--json", metavar="PATH", help="Also write the spec as JSON.")
     classify_cmd.add_argument("--md", metavar="PATH", help="Also write the task document.")
     classify_cmd.set_defaults(func=_cmd_classify)
+
+    models_cmd = sub.add_parser(
+        "models", help="List model IDs this API key can reach."
+    )
+    models_cmd.set_defaults(func=_cmd_models)
 
     schema_cmd = sub.add_parser("schema", help="Print the TaskSpec JSON schema.")
     schema_cmd.add_argument("--out", metavar="PATH", help="Write the schema to a file.")

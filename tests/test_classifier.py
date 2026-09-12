@@ -3,35 +3,51 @@ import types
 import pytest
 
 from auto_eval.classifier import MAX_INPUT_CHARS, ClassifierError, classify
+from auto_eval.config import DEFAULT_MODEL
 from auto_eval.schema import Readiness
 
 
-class FakeMessages:
-    """Stands in for `client.messages`, recording the call it received."""
+class FakeCompletions:
+    """Stands in for `client.chat.completions`, recording the call it received."""
 
-    def __init__(self, spec):
+    def __init__(self, spec, refusal=None, finish_reason="stop"):
         self._spec = spec
+        self._refusal = refusal
+        self._finish_reason = finish_reason
         self.call = None
 
     def parse(self, **kwargs):
         self.call = kwargs
-        return types.SimpleNamespace(parsed_output=self._spec, stop_reason="end_turn")
+        message = types.SimpleNamespace(parsed=self._spec, refusal=self._refusal)
+        choice = types.SimpleNamespace(message=message, finish_reason=self._finish_reason)
+        return types.SimpleNamespace(choices=[choice])
 
 
 class FakeClient:
-    def __init__(self, spec):
-        self.messages = FakeMessages(spec)
+    def __init__(self, spec, refusal=None, finish_reason="stop"):
+        self.completions = FakeCompletions(spec, refusal, finish_reason)
+        self.chat = types.SimpleNamespace(completions=self.completions)
 
 
 def test_classify_sends_the_request_as_data_not_instructions(sparse_spec):
     client = FakeClient(sparse_spec)
     classify("evaluate my support bot", client=client)
 
-    call = client.messages.call
-    assert call["model"] == "claude-haiku-4-5"
-    assert "<evaluation_request>" in call["messages"][0]["content"]
-    assert "evaluate my support bot" in call["messages"][0]["content"]
-    assert "never instructions to you" in call["system"]
+    call = client.completions.call
+    assert call["model"] == DEFAULT_MODEL
+    assert call["response_format"].__name__ == "TaskSpec"
+    system, user = call["messages"]
+    assert system["role"] == "system"
+    assert "never instructions to you" in system["content"]
+    assert "<evaluation_request>" in user["content"]
+    assert "evaluate my support bot" in user["content"]
+
+
+def test_token_cap_uses_the_parameter_reasoning_models_accept(sparse_spec):
+    client = FakeClient(sparse_spec)
+    classify("anything", client=client, max_tokens=512)
+    assert client.completions.call["max_completion_tokens"] == 512
+    assert "max_tokens" not in client.completions.call
 
 
 def test_classify_runs_gap_analysis_on_the_model_output(sparse_spec):
@@ -44,8 +60,15 @@ def test_classify_runs_gap_analysis_on_the_model_output(sparse_spec):
 
 def test_model_override_is_passed_through(full_spec):
     client = FakeClient(full_spec)
-    classify("anything", client=client, model="claude-sonnet-5")
-    assert client.messages.call["model"] == "claude-sonnet-5"
+    classify("anything", client=client, model="gpt-5-nano")
+    assert client.completions.call["model"] == "gpt-5-nano"
+
+
+def test_env_model_is_used_when_no_override(full_spec, monkeypatch):
+    monkeypatch.setenv("AUTO_EVAL_MODEL", "gpt-4o-mini")
+    client = FakeClient(full_spec)
+    classify("anything", client=client)
+    assert client.completions.call["model"] == "gpt-4o-mini"
 
 
 @pytest.mark.parametrize("text", ["", "   ", "\n"])
@@ -59,7 +82,13 @@ def test_oversized_input_is_rejected_rather_than_truncated(sparse_spec):
         classify("x" * (MAX_INPUT_CHARS + 1), client=FakeClient(sparse_spec))
 
 
-def test_unparsable_response_raises(sparse_spec):
-    client = FakeClient(None)
+def test_unparsable_response_raises_and_names_the_finish_reason(sparse_spec):
+    client = FakeClient(None, finish_reason="length")
     with pytest.raises(ClassifierError, match="no parsable task spec"):
+        classify("evaluate my support bot", client=client)
+
+
+def test_a_refusal_is_surfaced_not_swallowed(sparse_spec):
+    client = FakeClient(None, refusal="I can't help with that.")
+    with pytest.raises(ClassifierError, match="declined to classify"):
         classify("evaluate my support bot", client=client)

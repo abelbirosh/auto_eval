@@ -90,3 +90,11 @@ of runs that came out the way the user wanted.
 Model questions are merged in after the rules and deduplicated against them by
 token overlap, so a reworded echo of a rule question is dropped and a genuinely
 new question survives.
+
+## A note on required fields
+
+The spec is extracted through OpenAI structured outputs in strict mode, which
+makes every property required. The model therefore returns all twelve top-level
+fields on every call, emitting empty lists and nulls for what it did not find,
+rather than omitting them. Nothing downstream changes: an empty `kpis` is still
+"found nothing", and the blocking rule above fires on it.

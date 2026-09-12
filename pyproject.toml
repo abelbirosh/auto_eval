@@ -8,8 +8,9 @@ version = "0.1.0"
 description = "Turn a free-form request into a structured evaluation task spec."
 requires-python = ">=3.10"
 dependencies = [
-    "anthropic>=1.0.0",
+    "openai>=1.40",
     "pydantic>=2.0",
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
