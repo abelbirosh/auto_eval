@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from .analysis import AnalysisReport, analyze_sources
+from .benchmarks import CATALOGUE, Benchmark, BenchmarkMatch, match
 from .classifier import DEFAULT_MAX_TOKENS, ClassifierError, classify, list_models
 from .config import DEFAULT_MODEL, get_settings
 from .gaps import analyze
@@ -177,6 +178,61 @@ def _write_analysis(analysis: AnalysisReport, out_dir: Path) -> List[str]:
     return written
 
 
+def _render_benchmark(entry: Benchmark, indent: str = "") -> str:
+    lines = [
+        f"{indent}{entry.name} - {entry.measures}",
+        f"{indent}  metric: {entry.metric}",
+        f"{indent}  {entry.url}",
+    ]
+    if entry.size:
+        lines.append(f"{indent}  size: {entry.size}")
+    lines.append(f"{indent}  licence: {entry.licence or 'not stated - check the page'}")
+    lines.append(f"{indent}  caveat: {entry.caveats}")
+    return "\n".join(lines)
+
+
+def _cmd_benchmarks(args: argparse.Namespace) -> int:
+    """List the catalogue, or the entries that match a spec.
+
+    Unlike the other commands this one never reads stdin: with nothing named it
+    prints the catalogue rather than waiting on a pipe that may never come.
+    """
+    if not args.spec and not args.text and not args.file:
+        for entry in CATALOGUE:
+            print(_render_benchmark(entry))
+            print()
+        return EXIT_OK
+
+    spec = _load_spec(args)
+    matches: List[BenchmarkMatch] = match(spec, limit=args.limit)
+
+    if args.format == "json":
+        print(
+            json.dumps(
+                [m.model_dump(mode="json") for m in matches], indent=2, default=str
+            )
+        )
+        return EXIT_OK
+
+    if not matches:
+        print(f"Nothing in the catalogue speaks to {spec.subject.name}.")
+        print(
+            "That is a normal answer for an in-house system - the ground-truth "
+            "search looks wider.",
+            file=sys.stderr,
+        )
+        return EXIT_OK
+
+    print(f"Benchmarks for {spec.subject.name}\n")
+    for hit in matches:
+        covers = f" - covers {', '.join(hit.covers_kpis)}" if hit.covers_kpis else ""
+        print(f"[{hit.fit.value}]{covers}")
+        print(_render_benchmark(hit.benchmark, indent="  "))
+        print(f"  matched because: {'; '.join(hit.reasons)}")
+        print()
+    return EXIT_OK
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     from .web import serve
 
@@ -317,6 +373,34 @@ def build_parser() -> argparse.ArgumentParser:
         "--reload", action="store_true", help="Restart on code changes."
     )
     serve_cmd.set_defaults(func=_cmd_serve)
+
+    bench_cmd = sub.add_parser(
+        "benchmarks",
+        help="Public benchmarks this task could be anchored on.",
+        description=(
+            "With no input, prints the catalogue. With a spec or a request, "
+            "prints the entries that match it. Offline either way - no API call "
+            "and no web search."
+        ),
+    )
+    bench_cmd.add_argument("text", nargs="*", help="The request, as text.")
+    bench_cmd.add_argument("-f", "--file", help="Read the request from a file.")
+    bench_cmd.add_argument("-s", "--spec", metavar="PATH", help="A spec JSON to match.")
+    bench_cmd.add_argument(
+        "--limit", type=int, default=5, help="How many matches to show."
+    )
+    bench_cmd.add_argument(
+        "--format", choices=["text", "json"], default="text", help="Stdout format."
+    )
+    bench_cmd.add_argument(
+        "--model",
+        default=None,
+        help="Model to classify with, when a request is given rather than a spec.",
+    )
+    bench_cmd.add_argument(
+        "--max-tokens", type=int, default=DEFAULT_MAX_TOKENS, help=argparse.SUPPRESS
+    )
+    bench_cmd.set_defaults(func=_cmd_benchmarks)
 
     models_cmd = sub.add_parser("models", help="List model IDs this API key can reach.")
     models_cmd.set_defaults(func=_cmd_models)
