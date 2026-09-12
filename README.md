@@ -9,29 +9,25 @@ you want tested.
 | --- | --- | --- |
 | 1 | [Classifier](classifier/) — free-form request → structured task spec | built |
 | 2 | [Ground truth identifier](ground_truth/) — find public baselines and labelled data, and say what is behind each link | built |
-| 3 | [Benchmark catalogue](auto_eval/benchmarks.py) — ten real public suites, matched onto a spec without a search | built |
-| 4 | [Agent suite builder](suite/) — profile an agent, then write the cases and the checks for it | built |
+| 3 | [Agent suite builder](suite/) — profile an agent, then write the cases and the checks for it | built |
 
-Three more to come.
+Four more to come.
 
 ```bash
-auto-eval benchmarks                    # the catalogue
-auto-eval benchmarks -s task.json       # the ones that fit your spec
 auto-eval profile -s task.json          # what it takes to run the agent, and whether we can
 auto-eval author  -s task.json -o suites/support-agent
 auto-eval suite   suites/support-agent  # read the written suite back
 ```
 
-Blocks 3 and 4 are both offline and deterministic: no API key, no network, same
-answer every time. A suite carries a digest over its own contents, so a number
-reported later can be traced to the exact cases that produced it.
+Block 3 is offline and deterministic: no API key, no network, same answer every
+time. A suite carries a digest over its own contents, so a number reported later
+can be traced to the exact cases that produced it.
 
-The catalogue is the deterministic counterpart to the ground-truth search: the
-model is good at finding something specific to your task and bad at reliably
-recalling whether a standard suite exists, so the standard suites are a lookup
-table. No API key, no network, same answer every time. It holds no scores — a
-stale leaderboard number is worse than none, so `analysis` quotes those from the
-live page instead.
+Public benchmark suites are reported by the ground-truth search and never turned
+into cases. A case pulled from a public suite is data the agent may well have
+trained on, which makes a score against it a floor rather than a capability —
+useful context for whoever is building the eval, not something to smuggle into
+their suite.
 
 ## Development
 

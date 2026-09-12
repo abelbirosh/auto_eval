@@ -162,3 +162,31 @@ def test_a_corrupt_suite_is_refused_rather_than_half_read(tmp_path):
     (tmp_path / "suite.json").write_text("{not json")
     with pytest.raises(SuiteError, match="not a readable suite"):
         load(tmp_path)
+
+
+def test_a_stateless_agent_is_not_reported_as_missing_fixtures(agent_spec):
+    """The bug: 53 of 55 cases "did not exist" for an agent with no world to seed."""
+    agent_spec.summary = "Evaluate the agent that searches the web and reads pages."
+    agent_spec.subject.description = (
+        "Runs a web search and extracts content from a URL."
+    )
+    agent_spec.subject.in_scope = ["web search"]
+    agent_spec.subject.inputs = "a query"
+    agent_spec.evidence = []
+
+    suite = build(agent_spec)
+    assert suite.profile.stateful is False
+    assert not any("does not exist yet" in warning for warning in suite.warnings)
+    assert any(
+        "no case needs a starting state" in warning for warning in suite.warnings
+    )
+
+
+def test_the_suite_no_longer_pulls_in_public_benchmarks(agent_spec):
+    """Cases from a public suite are data the agent may have trained on."""
+    suite = build(agent_spec)
+    assert {c.source for c in suite.cases} <= {
+        CaseSource.HARVESTED,
+        CaseSource.SYNTHESISED,
+    }
+    assert all(case.source_url is None for case in suite.cases)

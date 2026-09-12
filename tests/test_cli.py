@@ -182,56 +182,6 @@ def test_force_reaches_the_search_so_the_gate_does_not_refuse_twice(
     assert seen["force"] is True
 
 
-def test_benchmarks_with_no_input_prints_the_catalogue(capsys):
-    """It must not sit waiting on a pipe that is never coming."""
-    assert main(["benchmarks"]) == 0
-    out = capsys.readouterr().out
-    assert "SWE-bench" in out
-    assert "https://" in out
-    assert out.count("metric:") == 10
-
-
-def test_benchmarks_matches_a_spec_from_disk(tmp_path, full_spec, capsys):
-    from auto_eval.gaps import analyze
-
-    spec_file = tmp_path / "spec.json"
-    spec_file.write_text(analyze(full_spec).model_dump_json())
-
-    assert main(["benchmarks", "-s", str(spec_file)]) == 0
-    out = capsys.readouterr().out
-    assert "Benchmarks for invoice extractor" in out
-    assert "matched because:" in out
-
-
-def test_benchmarks_json_output_is_machine_readable(tmp_path, full_spec, capsys):
-    import json as _json
-
-    from auto_eval.gaps import analyze
-
-    spec_file = tmp_path / "spec.json"
-    spec_file.write_text(analyze(full_spec).model_dump_json())
-
-    assert main(["benchmarks", "-s", str(spec_file), "--format", "json"]) == 0
-    payload = _json.loads(capsys.readouterr().out)
-    assert all({"benchmark", "fit", "score"} <= set(row) for row in payload)
-
-
-def test_benchmarks_never_calls_the_model_for_a_spec_on_disk(
-    tmp_path, full_spec, monkeypatch
-):
-    from auto_eval import cli
-    from auto_eval.gaps import analyze
-
-    def boom(*a, **kw):  # pragma: no cover - must not be reached
-        raise AssertionError("matching is offline")
-
-    monkeypatch.setattr(cli, "classify", boom)
-    spec_file = tmp_path / "spec.json"
-    spec_file.write_text(analyze(full_spec).model_dump_json())
-
-    assert main(["benchmarks", "-s", str(spec_file)]) == 0
-
-
 # --- the agent suite commands ----------------------------------------------
 
 

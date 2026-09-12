@@ -377,7 +377,6 @@ CELL_MARK = {
 
 SOURCE_BLURB = {
     CaseSource.HARVESTED: "from runs and incidents you already have - the strongest cases here",
-    CaseSource.ADAPTED: "from a public suite; real tasks, but possibly in the agent's training data",
     CaseSource.SYNTHESISED: "generated from the spec; cheap, and partly a measurement of the generator",
 }
 
@@ -583,7 +582,7 @@ def render_case(case: Case) -> str:
         case.instruction,
         "",
         f"**Starting state:** {case.fixture.reference}"
-        + ("" if case.fixture.materialised else " _(not built yet)_"),
+        + (" _(not built yet)_" if case.fixture.outstanding else ""),
         "",
     ]
     if case.stubs:

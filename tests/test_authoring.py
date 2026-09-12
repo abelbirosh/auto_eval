@@ -1,10 +1,9 @@
-from auto_eval.agent import profile
+from auto_eval.agent import Effect, profile
 from auto_eval.authoring import (
     MAX_SYNTHETIC_SHARE,
     CaseSource,
     FixtureKind,
     StubBehaviour,
-    adapted,
     author,
     harvested,
     nearest_behaviour,
@@ -12,13 +11,7 @@ from auto_eval.authoring import (
     synthetic_share,
 )
 from auto_eval.gaps import analyze
-from auto_eval.schema import (
-    EvalType,
-    EvidenceItem,
-    EvidenceKind,
-    EvidenceStatus,
-    SubjectKind,
-)
+from auto_eval.schema import EvalType, EvidenceItem, EvidenceKind, EvidenceStatus
 from auto_eval.surface import surface
 from auto_eval.verify import VerifierKind
 
@@ -104,24 +97,6 @@ def test_a_harvested_case_lands_on_the_behaviour_it_mentions(agent_spec):
 
 def test_nearest_behaviour_falls_back_rather_than_dropping_a_case():
     assert nearest_behaviour("something unrelated", ["alpha", "beta"]) == "alpha"
-
-
-# --- adapted ---------------------------------------------------------------
-
-
-def test_a_public_suite_carries_its_link_and_its_contamination_warning(agent_spec):
-    cases = adapted(analyze(agent_spec), profile(agent_spec), ["refund requests"])
-    for case in cases:
-        assert case.source_url and case.source_url.startswith("https://")
-        assert any("training data" in note for note in case.notes)
-        assert case.fixture.kind is FixtureKind.EXTERNAL_DATASET
-
-
-def test_nothing_is_adapted_when_the_catalogue_has_nothing_to_say(agent_spec):
-    agent_spec.subject.kind = SubjectKind.OTHER
-    agent_spec.eval_types = []
-    agent_spec.kpis = []
-    assert adapted(analyze(agent_spec), profile(agent_spec), ["the job"]) == []
 
 
 # --- synthesised -----------------------------------------------------------
@@ -239,3 +214,66 @@ def test_more_evidence_moves_the_mix(agent_spec):
     )
     _, _, _, after = build(agent_spec, per_cell=1)
     assert synthetic_share(after) < synthetic_share(before)
+
+
+# --- statelessness ---------------------------------------------------------
+
+
+def read_only(spec):
+    """The same agent stripped of anything that writes: search and fetch only."""
+    spec.summary = "Evaluate the agent that searches the web and extracts page content."
+    spec.subject.description = "Runs a web search and extracts content from a URL."
+    spec.subject.in_scope = ["web search"]
+    spec.subject.inputs = "a query"
+    spec.evidence = []
+    spec.constraints = ["runs in a docker sandbox"]
+    return spec
+
+
+def test_an_agent_that_writes_nothing_needs_nothing_built(agent_spec):
+    """The bug this fixes: a stateless agent came back needing fixtures for a world it has none of."""
+    _, agent_profile, _, cases = build(read_only(agent_spec))
+    assert agent_profile.stateful is False
+    assert needs_fixture(cases) == []
+    assert {c.fixture.kind for c in cases} == {FixtureKind.NONE}
+
+
+def test_an_agent_that_writes_still_needs_its_fixtures(agent_spec):
+    _, agent_profile, _, cases = build(agent_spec)
+    assert agent_profile.stateful is True
+    assert needs_fixture(cases)
+    assert FixtureKind.WORKSPACE in {c.fixture.kind for c in cases}
+
+
+def test_a_fixture_with_nothing_to_build_is_not_outstanding(agent_spec):
+    _, _, _, cases = build(read_only(agent_spec))
+    assert all(c.fixture.outstanding is False for c in cases)
+
+
+def test_already_done_is_meaningless_without_persistence(agent_spec):
+    assert "capability.already_done" in families(build(agent_spec)[3])
+    assert "capability.already_done" not in families(build(read_only(agent_spec))[3])
+
+
+def test_nothing_asserts_on_a_world_that_does_not_persist(agent_spec):
+    """An end-state check against a stateless agent can never fail, so it is noise."""
+    _, _, _, cases = build(read_only(agent_spec))
+    unsatisfiable = next(c for c in cases if c.family == "capability.unsatisfiable")
+    assert VerifierKind.END_STATE not in kinds_in(unsatisfiable)
+
+
+def test_a_case_about_a_missing_record_does_not_forbid_looking_for_it(agent_spec):
+    """Forbidding the search that establishes the record is missing makes the case unpassable."""
+    _, agent_profile, _, cases = build(read_only(agent_spec))
+    assert [t.name for t in agent_profile.tools_with(Effect.EXTERNAL)]
+    unsatisfiable = next(c for c in cases if c.family == "capability.unsatisfiable")
+    forbidden = {
+        v.tool for v in unsatisfiable.verifiers if v.kind is VerifierKind.TOOL_FORBIDDEN
+    }
+    assert "web search" not in forbidden
+
+
+def test_reaching_outside_is_still_guarded_for_a_read_only_agent(agent_spec):
+    """It is no_escape's job, not the forbidden-tool list's."""
+    _, _, _, cases = build(read_only(agent_spec))
+    assert all(VerifierKind.NO_ESCAPE in kinds_in(case) for case in cases)

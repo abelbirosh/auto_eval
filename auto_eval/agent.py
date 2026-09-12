@@ -64,6 +64,12 @@ EFFECT_SEVERITY = [Effect.READ, Effect.WRITE, Effect.EXTERNAL, Effect.DESTRUCTIV
 # Effects that must not touch anything real during an evaluation.
 CONTAINED_EFFECTS = frozenset({Effect.EXTERNAL, Effect.DESTRUCTIVE})
 
+# Effects that leave a mark a later check could look for. Reaching a third party
+# is not one of them: a web search changes nothing, and an agent that only reads
+# has no starting state anyone could build for it. This is what separates an
+# agent a fixture means something for from one where it is ceremony.
+COMMITTING_EFFECTS = frozenset({Effect.WRITE, Effect.DESTRUCTIVE})
+
 
 class Isolation(str, Enum):
     """Where a run is allowed to happen."""
@@ -120,6 +126,10 @@ class AgentProfile(BaseModel):
     tools: List[ToolFacet] = Field(default_factory=list)
     isolation: Isolation = Isolation.UNKNOWN
     budget: Budget = Field(default_factory=Budget)
+    stateful: bool = Field(
+        default=False,
+        description="Whether it changes anything a case could seed beforehand and assert on after.",
+    )
     stochastic: bool = True
     samples: int = Field(
         default=1, description="Runs per case. More than one only when stochastic."
@@ -455,6 +465,13 @@ def profile(spec: TaskSpec) -> AgentProfile:
         )
 
     isolation = _isolation(text)
+    stateful = bool([t for t in tools if t.effect in COMMITTING_EFFECTS])
+    if not stateful:
+        assumptions.append(
+            "Nothing it can reach writes anything, so it is treated as holding no state: cases carry a "
+            "request and no starting state to build, and nothing checks what the world looked like afterwards."
+        )
+
     budget, budget_notes = _budget(spec)
     assumptions.extend(budget_notes)
 
@@ -473,6 +490,7 @@ def profile(spec: TaskSpec) -> AgentProfile:
         tools=tools,
         isolation=isolation,
         budget=budget,
+        stateful=stateful,
         stochastic=stochastic,
         samples=samples,
         assumptions=assumptions,
@@ -506,7 +524,7 @@ def agent_gate(spec: TaskSpec, agent_profile: Optional[AgentProfile] = None) -> 
             reason=(
                 f"The subject is a {spec.subject.kind.value}, not an agent or a workflow. "
                 "A trajectory suite would be measuring something that has no trajectory; "
-                "use `auto-eval benchmarks` and the ground-truth search instead."
+                "use the ground-truth search instead."
             ),
         )
 
@@ -561,6 +579,7 @@ def agent_gate(spec: TaskSpec, agent_profile: Optional[AgentProfile] = None) -> 
 
 __all__ = [
     "AGENTIC_KINDS",
+    "COMMITTING_EFFECTS",
     "CONTAINED_EFFECTS",
     "DEFAULT_MAX_SECONDS",
     "DEFAULT_MAX_STEPS",

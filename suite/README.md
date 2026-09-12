@@ -18,7 +18,7 @@ diffed rather than regenerated into something subtly different.
 
 | Module | Question | Output |
 | --- | --- | --- |
-| [`agent.py`](../auto_eval/agent.py) | What can we drive, and is it safe to drive it? | `AgentProfile` + a gate |
+| [`agent.py`](../auto_eval/agent.py) | What can we drive, is it safe to drive, and does it hold anything? | `AgentProfile` + a gate |
 | [`surface.py`](../auto_eval/surface.py) | What should be tested? | `CoverageMatrix` |
 | [`authoring.py`](../auto_eval/authoring.py) | Where do the cases come from? | `Case[]` |
 | [`verify.py`](../auto_eval/verify.py) | How does each case get scored? | `Verifier[]` |
@@ -69,22 +69,42 @@ In the order they are trusted:
    state is known; an incident you remember is a regression case that is, by
    construction, about something that really breaks. Best data in the building,
    and it arrives free with the spec.
-2. **Adapted** — a public suite the [catalogue](../auto_eval/benchmarks.py)
-   matched. Real tasks, real scoring, and a contamination problem: anything
-   public may already be in the agent's training data, so every adapted case
-   carries its source.
-3. **Synthesised** — generated from the spec by rule. Cheap, unlimited, and the
-   weakest of the three, because a generated case measures the generator as much
-   as the agent.
+2. **Synthesised** — generated from the spec by rule. Cheap, unlimited, and the
+   weaker of the two, because a generated case measures the generator as much as
+   the agent.
 
-Harvested and adapted cases are written **first** and counted against the grid,
-so synthesis only fills what is genuinely still empty. Above 50% synthesised, the
-suite says on its own face that a headline number from it is partly a
-measurement of the generator.
+Harvested cases are written **first** and counted against the grid, so synthesis
+only fills what is genuinely still empty. Above 50% synthesised, the suite says
+on its own face that a headline number from it is partly a measurement of the
+generator.
 
 Nothing generates a regression case. Inventing an incident tests our imagination.
 
-## 4. Checks
+**Public benchmark suites are not a third source.** A case pulled from one is
+data the agent may well have trained on, so a score against it is a floor rather
+than a capability. The [ground-truth search](../ground_truth/) already reports
+what exists publicly, which is where that belongs: context for the person
+building the eval, not cases in their suite.
+
+## 4. Does it hold anything
+
+Whether the agent **commits** something — writes, deletes, moves money — decides
+a lot of what the other stages do. An agent that only reads and searches has no
+starting world anyone could build for it, so:
+
+- its fixtures are `NONE` rather than a workspace nobody can produce,
+- `capability.already_done` is not generated, because nothing persists between
+  runs for it to have already done,
+- the "nothing in the environment changed" check is dropped, because against a
+  stateless agent it can never fail, and a check that can never fail is noise in
+  every report it appears in.
+
+Reaching a third party is not the same as committing: a web search changes
+nothing, so `external` tools do not make an agent stateful. They are guarded by
+`no_escape` instead — and a case about a record that does not exist must not
+forbid the search that establishes it does not exist.
+
+## 5. Checks
 
 Each KPI's `Measurement` picks its check, so the spec keeps deciding what "good"
 means:

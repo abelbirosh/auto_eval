@@ -104,7 +104,6 @@ classified, not obeyed.
 | [prompts.py](../auto_eval/prompts.py) | The extraction system prompt. |
 | [classifier.py](../auto_eval/classifier.py) | The API call, error mapping, input limits. |
 | [derive.py](../auto_eval/derive.py) | Fills the holes the spec implies, before any question is asked. |
-| [benchmarks.py](../auto_eval/benchmarks.py) | Ten real public benchmarks, matched onto a spec offline. |
 | [gaps.py](../auto_eval/gaps.py) | Rule-based gap analysis and the readiness verdict. |
 | [render.py](../auto_eval/render.py) | `TaskSpec` → task document. |
 | [config.py](../auto_eval/config.py) | `.env` loading and provider settings. |

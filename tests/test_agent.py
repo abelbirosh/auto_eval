@@ -182,3 +182,31 @@ def test_a_mentioned_recording_is_not_one_either(agent_spec):
         )
     ]
     assert profile(agent_spec).run_mode is RunMode.UNKNOWN
+
+
+# --- does it hold anything -------------------------------------------------
+
+
+def test_an_agent_that_writes_holds_state(agent_spec):
+    assert profile(agent_spec).stateful is True
+
+
+def test_reaching_the_outside_world_is_not_holding_state(agent_spec):
+    """A web search changes nothing, so there is no starting world to build."""
+    agent_spec.summary = "Evaluate the agent that searches the web and reads pages."
+    agent_spec.subject.description = (
+        "Runs a web search and extracts content from a URL."
+    )
+    agent_spec.subject.in_scope = ["web search"]
+    agent_spec.subject.inputs = "a query"
+    agent_profile = profile(agent_spec)
+    assert agent_profile.tools_with(Effect.EXTERNAL)
+    assert agent_profile.stateful is False
+
+
+def test_statelessness_is_recorded_as_an_assumption_not_assumed_silently(agent_spec):
+    agent_spec.summary = "Evaluate a read-only lookup agent."
+    agent_spec.subject.description = "Runs a web search."
+    agent_spec.subject.in_scope = ["web search"]
+    agent_spec.subject.inputs = "a query"
+    assert any("holding no state" in note for note in profile(agent_spec).assumptions)

@@ -155,9 +155,9 @@ def _warnings(
     share = synthetic_share(suite_cases)
     if share > MAX_SYNTHETIC_SHARE:
         out.append(
-            f"{share:.0%} of these cases were generated from the spec rather than taken from your runs "
-            f"or a public suite. Above {MAX_SYNTHETIC_SHARE:.0%}, a headline number from this suite is "
-            "partly a measurement of the generator. Sharing golden runs and incidents is what fixes it."
+            f"{share:.0%} of these cases were generated from the spec rather than taken from your own runs. "
+            f"Above {MAX_SYNTHETIC_SHARE:.0%}, a headline number from this suite is partly a measurement of "
+            "the generator. Sharing golden runs and incidents is the only thing that fixes it."
         )
 
     pending = needs_fixture(suite_cases)
@@ -165,6 +165,12 @@ def _warnings(
         out.append(
             f"{len(pending)} of {len(suite_cases)} cases describe a starting state that does not exist yet. "
             "Nothing here runs until those fixtures are built."
+        )
+    elif not agent_profile.stateful:
+        out.append(
+            "Nothing it can reach writes anything, so no case needs a starting state built for it and no "
+            "check asks what the world looked like afterwards. If that is wrong - if it can write, send, or "
+            "buy - say so, because this suite currently cannot catch it doing any of those."
         )
 
     automatic = automatic_share([v for case in suite_cases for v in case.verifiers])
@@ -221,8 +227,7 @@ def build(
 
     notes = [
         f"Coverage: {coverage_ratio(filled):.0%} of the {filled.target_total} cases the grid asked for.",
-        f"Sources: {len(([c for c in cases if c.source is CaseSource.HARVESTED]))} harvested, "
-        f"{len([c for c in cases if c.source is CaseSource.ADAPTED])} adapted, "
+        f"Sources: {len([c for c in cases if c.source is CaseSource.HARVESTED])} harvested, "
         f"{len([c for c in cases if c.source is CaseSource.SYNTHESISED])} synthesised.",
         f"Running it once means {len(cases)} x {agent_profile.samples} = {len(cases) * agent_profile.samples} agent runs.",
         *filled.notes,
