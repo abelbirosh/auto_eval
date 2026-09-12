@@ -15,10 +15,17 @@ def fields(questions):
     return {q.field for q in questions}
 
 
-def test_sparse_spec_is_blocked_on_entry_point_and_kpis(sparse_spec):
+def test_only_missing_kpis_blocks(sparse_spec):
+    """Everything else is worth asking about but does not stop a spec."""
     questions = rule_questions(sparse_spec)
     blocking = {q.field for q in questions if q.blocking}
-    assert blocking == {"subject.interface", "kpis"}
+    assert blocking == {"kpis"}
+
+
+def test_a_missing_entry_point_is_asked_about_but_does_not_block(sparse_spec):
+    interface = [q for q in rule_questions(sparse_spec) if q.field == "subject.interface"]
+    assert len(interface) == 1
+    assert interface[0].blocking is False
 
 
 def test_sparse_spec_always_asks_for_docs_and_successful_runs(sparse_spec):
@@ -71,10 +78,17 @@ def test_untargeted_kpi_asks_for_a_threshold_but_guardrails_are_exempt(full_spec
     assert "kpis.priority" in fields(questions)  # nothing is primary any more
 
 
-def test_programmatic_kpi_without_ground_truth_blocks(full_spec):
+def test_programmatic_kpi_without_ground_truth_asks_but_does_not_block(full_spec):
     full_spec.ground_truth.available = False
-    blocking = {q.field for q in rule_questions(full_spec) if q.blocking}
-    assert blocking == {"ground_truth"}
+    questions = rule_questions(full_spec)
+    assert [q.field for q in questions] == ["ground_truth"]
+    assert questions[0].blocking is False
+
+
+def test_a_spec_with_kpis_but_gaps_reads_needs_input_not_insufficient(full_spec):
+    full_spec.ground_truth.available = False
+    full_spec.subject.interface = None
+    assert analyze(full_spec).readiness is Readiness.NEEDS_INPUT
 
 
 def test_per_kpi_questions_are_capped(full_spec):
