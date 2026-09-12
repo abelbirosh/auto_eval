@@ -1,5 +1,12 @@
 """System prompts for the classifier and the ground-truth identifier."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Sequence
+
+if TYPE_CHECKING:  # annotations only - this module holds no runtime imports
+    from .schema import KPI, TaskSpec
+
 SYSTEM_PROMPT = """\
 You are the input classifier for Auto_Eval, a system that builds evaluations for \
 software and AI systems. A user describes, in free form, something they want \
@@ -125,8 +132,10 @@ Find public ground truth and baselines for this evaluation task.
 </task_spec>"""
 
 
-def _kpi_line(kpi) -> str:
-    bits = [f"{kpi.name} ({kpi.kind.value}, {kpi.priority.value}): {kpi.definition.rstrip('.')}"]
+def _kpi_line(kpi: KPI) -> str:
+    bits = [
+        f"{kpi.name} ({kpi.kind.value}, {kpi.priority.value}): {kpi.definition.rstrip('.')}"
+    ]
     if kpi.unit:
         bits.append(f"unit {kpi.unit}")
     if kpi.target:
@@ -137,7 +146,7 @@ def _kpi_line(kpi) -> str:
     return "- " + "; ".join(bits)
 
 
-def build_ground_truth_message(spec) -> str:
+def build_ground_truth_message(spec: TaskSpec) -> str:
     """Render the parts of a TaskSpec a web search can act on.
 
     Open questions and confidence scores are left out deliberately: they say
@@ -176,7 +185,11 @@ def build_ground_truth_message(spec) -> str:
         "Ground truth we already hold: "
         + (
             (spec.ground_truth.description or "unspecified")
-            + (f" (n={spec.ground_truth.sample_size})" if spec.ground_truth.sample_size else "")
+            + (
+                f" (n={spec.ground_truth.sample_size})"
+                if spec.ground_truth.sample_size
+                else ""
+            )
             if spec.ground_truth.available
             else "none"
         ),
@@ -284,7 +297,12 @@ Assess this page as an anchor for the evaluation below.
 
 
 def build_dataset_assessment_message(
-    task: str, dataset: str, columns, splits: str, licence: str, description: str
+    task: str,
+    dataset: str,
+    columns: Sequence[str],
+    splits: str,
+    licence: str,
+    description: str,
 ) -> str:
     return DATASET_ASSESSMENT_TEMPLATE.format(
         task=task,

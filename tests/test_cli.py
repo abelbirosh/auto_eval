@@ -25,7 +25,10 @@ def test_classify_parser_defaults():
 
 
 def test_model_flag_overrides():
-    assert build_parser().parse_args(["classify", "x", "--model", "gpt-4o-mini"]).model == "gpt-4o-mini"
+    assert (
+        build_parser().parse_args(["classify", "x", "--model", "gpt-4o-mini"]).model
+        == "gpt-4o-mini"
+    )
 
 
 def test_ground_truth_parser_takes_a_spec_or_text():
@@ -103,7 +106,9 @@ def test_the_analysis_is_written_where_a_later_step_can_pick_it_up(
     out_dir = tmp_path / "data"
 
     monkeypatch.setattr(
-        cli, "identify", lambda spec, **kw: assess(spec, SourceFindings(recommendation="x"))
+        cli,
+        "identify",
+        lambda spec, **kw: assess(spec, SourceFindings(recommendation="x")),
     )
     monkeypatch.setattr(
         cli,
@@ -128,12 +133,27 @@ def test_the_analysis_is_written_where_a_later_step_can_pick_it_up(
         ),
     )
 
-    assert main(["ground-truth", "-s", str(spec_file), "--analyze", "--out-dir", str(out_dir)]) == EXIT_OK
+    assert (
+        main(
+            [
+                "ground-truth",
+                "-s",
+                str(spec_file),
+                "--analyze",
+                "--out-dir",
+                str(out_dir),
+            ]
+        )
+        == EXIT_OK
+    )
 
     plans = json.loads((out_dir / "fetch-plan.json").read_text())
     assert plans[0]["dataset"] == "acme/invoices"
     assert plans[0]["split"] == "validation"
-    assert json.loads((out_dir / "sources.json").read_text())["subject"] == "invoice extractor"
+    assert (
+        json.loads((out_dir / "sources.json").read_text())["subject"]
+        == "invoice extractor"
+    )
     assert "Source analysis" in (out_dir / "sources.md").read_text()
     assert "Source analysis" in capsys.readouterr().out
 

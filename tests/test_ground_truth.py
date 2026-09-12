@@ -164,13 +164,18 @@ def test_a_source_with_no_usable_link_is_dropped_and_noted(full_spec):
 def test_the_same_url_twice_is_kept_once(full_spec):
     report = assess(
         full_spec,
-        findings(source(), source(name="DocVQA mirror", url="https://www.example.org/docvqa/")),
+        findings(
+            source(),
+            source(name="DocVQA mirror", url="https://www.example.org/docvqa/"),
+        ),
     )
     assert [s.name for s in report.sources] == ["DocVQA"]
 
 
 def test_a_kpi_name_the_spec_does_not_have_is_dropped(full_spec):
-    report = assess(full_spec, findings(source(covers_kpis=["vibes", "Field Accuracy"])))
+    report = assess(
+        full_spec, findings(source(covers_kpis=["vibes", "Field Accuracy"]))
+    )
     # Case and spacing are forgiven; an invented KPI is not.
     assert report.sources[0].covers_kpis == ["field accuracy"]
 
@@ -201,7 +206,10 @@ def test_the_verdict_takes_the_best_covered_kpi(full_spec):
     )
     report = assess(full_spec, findings(source()))
     assert report.verdict is Availability.LABELLED_DATA
-    assert [c.coverage for c in report.kpi_coverage] == [Coverage.LABELLED, Coverage.NONE]
+    assert [c.coverage for c in report.kpi_coverage] == [
+        Coverage.LABELLED,
+        Coverage.NONE,
+    ]
 
 
 # --- the search call ------------------------------------------------------

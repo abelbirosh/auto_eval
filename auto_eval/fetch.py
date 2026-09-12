@@ -65,7 +65,9 @@ class DatasetMeta(BaseModel):
     ok: bool = True
     error: Optional[str] = None
     configs: List[str] = Field(default_factory=list)
-    config: Optional[str] = Field(default=None, description="The config described below.")
+    config: Optional[str] = Field(
+        default=None, description="The config described below."
+    )
     columns: List[str] = Field(default_factory=list)
     splits: List[Split] = Field(default_factory=list)
     licence: Optional[str] = None
@@ -123,7 +125,9 @@ def check_url(url: str) -> Tuple[bool, str]:
         return False, f"Refused: {host or 'that URL'} is a private or local address."
 
     try:
-        answers = socket.getaddrinfo(host, parts.port or (443 if parts.scheme == "https" else 80))
+        answers = socket.getaddrinfo(
+            host, parts.port or (443 if parts.scheme == "https" else 80)
+        )
     except OSError as exc:
         return False, f"Could not resolve {host}: {exc}"
 
@@ -172,16 +176,16 @@ def _get(url: str, *, as_json: bool) -> Any:
             if as_json:
                 response = client.get(url)
             else:
-                response = client.send(
-                    client.build_request("GET", url), stream=True
-                )
+                response = client.send(client.build_request("GET", url), stream=True)
 
             if response.is_redirect:
                 location = response.headers.get("location", "")
                 if not as_json:
                     response.close()
                 if not location:
-                    raise RuntimeError(f"HTTP {response.status_code} with no destination.")
+                    raise RuntimeError(
+                        f"HTTP {response.status_code} with no destination."
+                    )
                 url = urljoin(url, location)
                 continue
 
@@ -223,7 +227,9 @@ def fetch_text(url: str) -> Fetched:
     try:
         (body, status), final = _get(url, as_json=False)
     except ImportError as exc:  # pragma: no cover - depends on install state
-        return Fetched(url=url, ok=False, error=f"httpx is needed to read sources: {exc}")
+        return Fetched(
+            url=url, ok=False, error=f"httpx is needed to read sources: {exc}"
+        )
     except PermissionError as exc:
         return Fetched(url=url, ok=False, error=str(exc))
     except Exception as exc:  # network, TLS, redirect loops - all the same to us
@@ -270,7 +276,9 @@ def fetch_dataset_meta(dataset: str, url: str = "") -> DatasetMeta:
     getting any of it.
     """
     encoded = quote(dataset, safe="/")
-    meta = DatasetMeta(dataset=dataset, url=url or f"https://huggingface.co/datasets/{dataset}")
+    meta = DatasetMeta(
+        dataset=dataset, url=url or f"https://huggingface.co/datasets/{dataset}"
+    )
 
     try:
         info = _json(f"{HF_DATASETS_API}/info?dataset={encoded}")
@@ -323,10 +331,10 @@ def fetch_dataset_meta(dataset: str, url: str = "") -> DatasetMeta:
 
 
 __all__ = [
-    "DatasetMeta",
-    "Fetched",
     "MAX_BYTES",
     "MAX_REDIRECTS",
+    "DatasetMeta",
+    "Fetched",
     "Split",
     "check_url",
     "fetch_dataset_meta",

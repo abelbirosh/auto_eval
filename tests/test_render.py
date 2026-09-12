@@ -72,7 +72,9 @@ def test_ground_truth_report_renders_sources_and_verdict(full_spec):
                     covers_kpis=["field accuracy"],
                     fit=Fit.ADAPTABLE,
                     access=Access.OPEN,
-                    baselines=[BaselineValue(metric="ANLS", value="0.87", system="LayoutLMv3")],
+                    baselines=[
+                        BaselineValue(metric="ANLS", value="0.87", system="LayoutLMv3")
+                    ],
                     caveats="Forms, not invoices.",
                 )
             ],
@@ -182,7 +184,9 @@ def test_analysis_renders_the_plan_the_dataset_and_the_failures():
     md = render_analysis(_analysis())
     assert "# Source analysis for invoice extractor" in md
     assert "Nothing below was downloaded" in md
-    assert "1,000 rows from acme/invoices (default/validation), image_text -> answer" in md
+    assert (
+        "1,000 rows from acme/invoices (default/validation), image_text -> answer" in md
+    )
     assert "| Splits | validation (1,000 rows) |" in md
     assert "| Licence | cc-by-4.0 |" in md
     assert "could not read" in md

@@ -8,9 +8,9 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
+from .analysis import AnalysisReport, analyze_sources
 from .classifier import DEFAULT_MAX_TOKENS, ClassifierError, classify, list_models
 from .config import DEFAULT_MODEL, get_settings
-from .analysis import AnalysisReport, analyze_sources
 from .gaps import analyze
 from .ground_truth import GroundTruthReport, gate, identify
 from .render import (
@@ -64,7 +64,10 @@ def _cmd_classify(args: argparse.Namespace) -> int:
     if args.ground_truth:
         decision = gate(spec)
         if not decision.open:
-            print(f"\nSkipping the ground-truth search: {decision.reason}", file=sys.stderr)
+            print(
+                f"\nSkipping the ground-truth search: {decision.reason}",
+                file=sys.stderr,
+            )
         else:
             print()
             _run_block(spec, args)
@@ -92,7 +95,9 @@ def _run_block(
     )
 
     if report_json:
-        Path(report_json).write_text(report.model_dump_json(indent=2) + "\n", encoding="utf-8")
+        Path(report_json).write_text(
+            report.model_dump_json(indent=2) + "\n", encoding="utf-8"
+        )
     if report_md:
         Path(report_md).write_text(render_ground_truth(report) + "\n", encoding="utf-8")
 
@@ -237,15 +242,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-tokens", type=int, default=DEFAULT_MAX_TOKENS, help="Output token cap."
     )
     classify_cmd.add_argument(
-        "--format", choices=["markdown", "json"], default="markdown", help="Stdout format."
+        "--format",
+        choices=["markdown", "json"],
+        default="markdown",
+        help="Stdout format.",
     )
     classify_cmd.add_argument(
         "--questions-only",
         action="store_true",
         help="Print only the open questions.",
     )
-    classify_cmd.add_argument("--json", metavar="PATH", help="Also write the spec as JSON.")
-    classify_cmd.add_argument("--md", metavar="PATH", help="Also write the task document.")
+    classify_cmd.add_argument(
+        "--json", metavar="PATH", help="Also write the spec as JSON."
+    )
+    classify_cmd.add_argument(
+        "--md", metavar="PATH", help="Also write the task document."
+    )
     classify_cmd.add_argument(
         "--ground-truth",
         action="store_true",
@@ -279,7 +291,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-tokens", type=int, default=DEFAULT_MAX_TOKENS, help="Output token cap."
     )
     gt_cmd.add_argument(
-        "--format", choices=["markdown", "json"], default="markdown", help="Stdout format."
+        "--format",
+        choices=["markdown", "json"],
+        default="markdown",
+        help="Stdout format.",
     )
     gt_cmd.add_argument("--json", metavar="PATH", help="Also write the report as JSON.")
     gt_cmd.add_argument("--md", metavar="PATH", help="Also write the report document.")
@@ -303,9 +318,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     serve_cmd.set_defaults(func=_cmd_serve)
 
-    models_cmd = sub.add_parser(
-        "models", help="List model IDs this API key can reach."
-    )
+    models_cmd = sub.add_parser("models", help="List model IDs this API key can reach.")
     models_cmd.set_defaults(func=_cmd_models)
 
     schema_cmd = sub.add_parser("schema", help="Print the TaskSpec JSON schema.")

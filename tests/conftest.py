@@ -1,6 +1,7 @@
 import pytest
 
 from auto_eval.schema import (
+    KPI,
     Confidence,
     Direction,
     EvalType,
@@ -8,7 +9,6 @@ from auto_eval.schema import (
     EvidenceKind,
     EvidenceStatus,
     GroundTruth,
-    KPI,
     Measurement,
     MetricKind,
     Priority,

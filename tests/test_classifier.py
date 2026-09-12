@@ -19,7 +19,9 @@ class FakeCompletions:
     def parse(self, **kwargs):
         self.call = kwargs
         message = types.SimpleNamespace(parsed=self._spec, refusal=self._refusal)
-        choice = types.SimpleNamespace(message=message, finish_reason=self._finish_reason)
+        choice = types.SimpleNamespace(
+            message=message, finish_reason=self._finish_reason
+        )
         return types.SimpleNamespace(choices=[choice])
 
 

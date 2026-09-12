@@ -3,11 +3,12 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("httpx")
 
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
-import auto_eval.web as web  # noqa: E402
-from auto_eval.classifier import ClassifierError  # noqa: E402
-from auto_eval.gaps import analyze  # noqa: E402
+import auto_eval.web as web
+from auto_eval.classifier import ClassifierError
+from auto_eval.config import Settings
+from auto_eval.gaps import analyze
 
 
 @pytest.fixture
@@ -24,7 +25,9 @@ def test_index_serves_the_page(client):
 
 def test_health_reports_key_and_model(client, monkeypatch):
     monkeypatch.setattr(
-        web, "get_settings", lambda **kw: web.Settings(api_key="k", model="m", base_url=None)
+        web,
+        "get_settings",
+        lambda **kw: Settings(api_key="k", model="m", base_url=None),
     )
     body = client.get("/api/health").json()
     assert body == {"has_key": True, "model": "m"}
@@ -78,7 +81,9 @@ def test_missing_text_is_a_validation_error(client):
     assert client.post("/api/classify", json={}).status_code == 422
 
 
-def test_ground_truth_returns_a_report_for_an_unblocked_spec(client, monkeypatch, full_spec):
+def test_ground_truth_returns_a_report_for_an_unblocked_spec(
+    client, monkeypatch, full_spec
+):
     from auto_eval.ground_truth import SourceFindings, assess
 
     captured = {}
@@ -103,7 +108,9 @@ def test_ground_truth_returns_a_report_for_an_unblocked_spec(client, monkeypatch
     assert "Ground truth for invoice extractor" in body["markdown"]
 
 
-def test_ground_truth_refuses_a_spec_that_still_blocks(client, monkeypatch, sparse_spec):
+def test_ground_truth_refuses_a_spec_that_still_blocks(
+    client, monkeypatch, sparse_spec
+):
     def boom(spec, **kwargs):  # pragma: no cover - must not be reached
         raise AssertionError("the gate should have stopped this")
 
@@ -117,7 +124,9 @@ def test_ground_truth_refuses_a_spec_that_still_blocks(client, monkeypatch, spar
     assert "Not ready to search" in response.json()["detail"]
 
 
-def test_a_spec_that_arrives_claiming_readiness_is_re_checked(client, monkeypatch, sparse_spec):
+def test_a_spec_that_arrives_claiming_readiness_is_re_checked(
+    client, monkeypatch, sparse_spec
+):
     """The gate reads the questions, not the readiness field the caller sent."""
     payload = analyze(sparse_spec).model_dump(mode="json")
     payload["readiness"] = "ready"
@@ -176,7 +185,10 @@ def test_analyze_returns_the_analysis_and_the_document(client, monkeypatch, full
     body = response.json()
     assert captured["subject"] == "invoice extractor"
     assert captured["model"] == "gpt-5"
-    assert body["analysis"]["resources"][0]["plan"]["what"] == "1,000 rows from acme/invoices"
+    assert (
+        body["analysis"]["resources"][0]["plan"]["what"]
+        == "1,000 rows from acme/invoices"
+    )
     assert "Source analysis for invoice extractor" in body["markdown"]
 
 

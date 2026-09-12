@@ -28,7 +28,9 @@ def test_blank_key_does_not_count_as_a_key(monkeypatch):
 
 
 def test_dotenv_is_read_but_a_real_env_var_wins(tmp_path, monkeypatch):
-    (tmp_path / ".env").write_text("OPENAI_API_KEY=from-file\nAUTO_EVAL_MODEL=model-from-file\n")
+    (tmp_path / ".env").write_text(
+        "OPENAI_API_KEY=from-file\nAUTO_EVAL_MODEL=model-from-file\n"
+    )
     monkeypatch.setattr(config, "_ENV_LOADED", False)
     monkeypatch.setenv("OPENAI_API_KEY", "from-shell")
     monkeypatch.delenv("AUTO_EVAL_MODEL", raising=False)
@@ -37,8 +39,8 @@ def test_dotenv_is_read_but_a_real_env_var_wins(tmp_path, monkeypatch):
 
     assert found == tmp_path / ".env"
     settings = get_settings()
-    assert settings.api_key == "from-shell"       # exported variable wins
-    assert settings.model == "model-from-file"    # file fills what is unset
+    assert settings.api_key == "from-shell"  # exported variable wins
+    assert settings.model == "model-from-file"  # file fills what is unset
 
 
 def test_dotenv_is_found_by_walking_up(tmp_path, monkeypatch):

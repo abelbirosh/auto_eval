@@ -23,7 +23,9 @@ def test_only_missing_kpis_blocks(sparse_spec):
 
 
 def test_a_missing_entry_point_is_asked_about_but_does_not_block(sparse_spec):
-    interface = [q for q in rule_questions(sparse_spec) if q.field == "subject.interface"]
+    interface = [
+        q for q in rule_questions(sparse_spec) if q.field == "subject.interface"
+    ]
     assert len(interface) == 1
     assert interface[0].blocking is False
 
@@ -102,9 +104,13 @@ def test_per_kpi_questions_are_capped(full_spec):
 
 
 def test_merge_drops_model_questions_that_restate_a_rule():
-    rule = Question(field="kpis", question="What metric decides success?", why="x", blocking=True)
+    rule = Question(
+        field="kpis", question="What metric decides success?", why="x", blocking=True
+    )
     echo = Question(field="kpis", question="what metric decides success", why="y")
-    fresh = Question(field="constraints", question="What is the latency budget?", why="z")
+    fresh = Question(
+        field="constraints", question="What is the latency budget?", why="z"
+    )
 
     merged = merge_questions([echo, fresh], [rule])
 

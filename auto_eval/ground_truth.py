@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field
 # Client construction and SDK error mapping are identical for both blocks, so
 # the classifier's helpers are reused rather than copied.
 from .classifier import ClassifierError, _as_classifier_error, _build_client
-from .config import get_settings
+from .config import Settings, get_settings
 from .prompts import GROUND_TRUTH_SYSTEM_PROMPT, build_ground_truth_message
 from .schema import Question, TaskSpec
 
@@ -61,13 +61,13 @@ class GroundTruthError(ClassifierError):
 
 
 class SourceKind(str, Enum):
-    DATASET = "dataset"                            # labelled examples
-    BENCHMARK = "benchmark"                        # data plus a scoring protocol
-    LEADERBOARD = "leaderboard"                    # scores for comparable systems
-    PUBLISHED_RESULT = "published_result"          # a number in a paper or report
-    STANDARD = "standard"                          # spec or regulation defining correctness
-    REFERENCE_IMPL = "reference_implementation"    # code we can diff against
-    VENDOR_CLAIM = "vendor_claim"                  # SLA, model card, pricing page
+    DATASET = "dataset"  # labelled examples
+    BENCHMARK = "benchmark"  # data plus a scoring protocol
+    LEADERBOARD = "leaderboard"  # scores for comparable systems
+    PUBLISHED_RESULT = "published_result"  # a number in a paper or report
+    STANDARD = "standard"  # spec or regulation defining correctness
+    REFERENCE_IMPL = "reference_implementation"  # code we can diff against
+    VENDOR_CLAIM = "vendor_claim"  # SLA, model card, pricing page
     OTHER = "other"
 
 
@@ -92,9 +92,9 @@ BASELINE_KINDS = frozenset(
 
 
 class Fit(str, Enum):
-    DIRECT = "direct"            # same task, same metric
-    ADAPTABLE = "adaptable"      # needs reformatting, filtering, or a subset
-    CONTEXTUAL = "contextual"    # a reference point only, not usable as data
+    DIRECT = "direct"  # same task, same metric
+    ADAPTABLE = "adaptable"  # needs reformatting, filtering, or a subset
+    CONTEXTUAL = "contextual"  # a reference point only, not usable as data
 
 
 USABLE_FITS = frozenset({Fit.DIRECT, Fit.ADAPTABLE})
@@ -115,7 +115,9 @@ class BaselineValue(BaseModel):
     system: Optional[str] = Field(
         default=None, description="What achieved it - model, product, or team."
     )
-    as_of: Optional[str] = Field(default=None, description="Date or version, if stated.")
+    as_of: Optional[str] = Field(
+        default=None, description="Date or version, if stated."
+    )
 
 
 class ExternalSource(BaseModel):
@@ -132,7 +134,9 @@ class ExternalSource(BaseModel):
     )
     fit: Fit
     access: Access = Access.UNKNOWN
-    licence: Optional[str] = Field(default=None, description="Licence or terms, if stated.")
+    licence: Optional[str] = Field(
+        default=None, description="Licence or terms, if stated."
+    )
     baselines: List[BaselineValue] = Field(default_factory=list)
     caveats: Optional[str] = Field(
         default=None, description="Why it might not transfer: age, domain, saturation."
@@ -147,7 +151,8 @@ class SourceFindings(BaseModel):
         description="What to actually use, in two sentences at most."
     )
     notes: List[str] = Field(
-        default_factory=list, description="Anything that changes how to read the sources."
+        default_factory=list,
+        description="Anything that changes how to read the sources.",
     )
 
 
@@ -157,13 +162,18 @@ class SourceFindings(BaseModel):
 
 
 class Coverage(str, Enum):
-    LABELLED = "labelled"    # something online says what the right answer is
-    BASELINE = "baseline"    # a comparable number exists, but no labels
+    LABELLED = "labelled"  # something online says what the right answer is
+    BASELINE = "baseline"  # a comparable number exists, but no labels
     REFERENCE = "reference"  # context only
     NONE = "none"
 
 
-COVERAGE_ORDER = [Coverage.NONE, Coverage.REFERENCE, Coverage.BASELINE, Coverage.LABELLED]
+COVERAGE_ORDER = [
+    Coverage.NONE,
+    Coverage.REFERENCE,
+    Coverage.BASELINE,
+    Coverage.LABELLED,
+]
 
 
 class KPICoverage(BaseModel):
@@ -171,14 +181,16 @@ class KPICoverage(BaseModel):
 
     kpi: str
     coverage: Coverage
-    sources: List[str] = Field(default_factory=list, description="Names of the sources.")
+    sources: List[str] = Field(
+        default_factory=list, description="Names of the sources."
+    )
 
 
 class Availability(str, Enum):
-    LABELLED_DATA = "labelled_data"              # can score against public data
+    LABELLED_DATA = "labelled_data"  # can score against public data
     PUBLISHED_BASELINES = "published_baselines"  # can compare, must label our own
-    REFERENCE_ONLY = "reference_only"            # context, nothing to score with
-    NONE_FOUND = "none_found"                    # build the ground truth ourselves
+    REFERENCE_ONLY = "reference_only"  # context, nothing to score with
+    NONE_FOUND = "none_found"  # build the ground truth ourselves
 
 
 VERDICT_FOR_COVERAGE = {
@@ -240,7 +252,10 @@ def gate(spec: TaskSpec) -> Gate:
         # Belt and braces: the KPI rule blocks upstream, so this only fires on a
         # spec assembled by hand.
         return Gate(open=False, reason="The spec has no KPIs to find baselines for.")
-    return Gate(open=True, reason="No blocking questions; the KPIs are settled enough to search on.")
+    return Gate(
+        open=True,
+        reason="No blocking questions; the KPIs are settled enough to search on.",
+    )
 
 
 # --------------------------------------------------------------------------
@@ -309,7 +324,9 @@ def _coverage_for(sources: Sequence[ExternalSource]) -> Coverage:
     usable = [s for s in sources if s.fit in USABLE_FITS]
     if any(s.kind in LABELLING_KINDS for s in usable):
         return Coverage.LABELLED
-    if any(s.baselines for s in sources) or any(s.kind in BASELINE_KINDS for s in usable):
+    if any(s.baselines for s in sources) or any(
+        s.kind in BASELINE_KINDS for s in usable
+    ):
         return Coverage.BASELINE
     return Coverage.REFERENCE
 
@@ -341,9 +358,7 @@ def assess(
 
     unattributed = [s.name for s in sources if not s.covers_kpis]
     if unattributed:
-        notes.append(
-            "Not tied to a specific KPI: " + ", ".join(unattributed) + "."
-        )
+        notes.append("Not tied to a specific KPI: " + ", ".join(unattributed) + ".")
 
     return GroundTruthReport(
         subject=spec.subject.name,
@@ -435,7 +450,9 @@ def identify(
                     max_tokens=max_tokens,
                 )
             except Exception as retry_exc:
-                raise _as_ground_truth_error(retry_exc, settings, search_model) from retry_exc
+                raise _as_ground_truth_error(
+                    retry_exc, settings, search_model
+                ) from retry_exc
         else:
             raise _as_ground_truth_error(exc, settings, search_model) from exc
 
@@ -452,17 +469,24 @@ def identify(
 def _is_unknown_tool(exc: Exception) -> bool:
     """Accounts on the older API only know `web_search_preview`."""
     message = str(exc).lower()
-    return "web_search" in message and ("unknown" in message or "not supported" in message
-                                        or "invalid" in message or "unsupported" in message)
+    return "web_search" in message and (
+        "unknown" in message
+        or "not supported" in message
+        or "invalid" in message
+        or "unsupported" in message
+    )
 
 
-def _as_ground_truth_error(exc: Exception, settings, model: str) -> GroundTruthError:
+def _as_ground_truth_error(
+    exc: Exception, settings: Settings, model: str
+) -> GroundTruthError:
     mapped = _as_classifier_error(exc, settings)
     text = str(mapped).replace(repr(settings.model), repr(model))
     return GroundTruthError(text)
 
 
 __all__ = [
+    "MAX_SOURCES",
     "Access",
     "Availability",
     "BaselineValue",
@@ -473,7 +497,6 @@ __all__ = [
     "GroundTruthError",
     "GroundTruthReport",
     "KPICoverage",
-    "MAX_SOURCES",
     "SourceFindings",
     "SourceKind",
     "assess",

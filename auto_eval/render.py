@@ -98,8 +98,12 @@ def render_markdown(spec: TaskSpec) -> str:
         f"- **Interface:** {_or_unknown(spec.subject.interface)}",
         f"- **Inputs:** {_or_unknown(spec.subject.inputs)}",
         f"- **Outputs:** {_or_unknown(spec.subject.outputs)}",
-        f"- **Evaluation type:** "
-        + (", ".join(t.value for t in spec.eval_types) if spec.eval_types else "_not stated_"),
+        "- **Evaluation type:** "
+        + (
+            ", ".join(t.value for t in spec.eval_types)
+            if spec.eval_types
+            else "_not stated_"
+        ),
         "",
         "**In scope**",
         "",
@@ -220,7 +224,10 @@ def render_ground_truth(report: GroundTruthReport) -> str:
             if source.covers_kpis:
                 lines += [f"Covers: {', '.join(source.covers_kpis)}", ""]
             if source.baselines:
-                lines += ["| Metric | Value | System | As of |", "| --- | --- | --- | --- |"]
+                lines += [
+                    "| Metric | Value | System | As of |",
+                    "| --- | --- | --- | --- |",
+                ]
                 for value in source.baselines:
                     lines.append(
                         f"| {value.metric} | {value.value} | {value.system or '—'} | "
@@ -323,7 +330,10 @@ def render_analysis(analysis: AnalysisReport) -> str:
                 lines += [f"**In the way:** {item.plan.blockers}", ""]
 
         if item.baselines:
-            lines += ["| Metric | Value | System | As of |", "| --- | --- | --- | --- |"]
+            lines += [
+                "| Metric | Value | System | As of |",
+                "| --- | --- | --- | --- |",
+            ]
             for value in item.baselines:
                 lines.append(
                     f"| {value.metric} | {value.value} | {value.system or '—'} | "

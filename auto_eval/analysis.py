@@ -29,9 +29,15 @@ from typing import Any, Callable, List, Optional, Sequence
 from pydantic import BaseModel, Field
 
 from .classifier import _as_classifier_error, _build_client
-from .config import get_settings
+from .config import Settings, get_settings
 from .fetch import DatasetMeta, Fetched, fetch_dataset_meta, fetch_text, hf_dataset_id
-from .ground_truth import Fit, GroundTruthError, GroundTruthReport, SourceKind
+from .ground_truth import (
+    ExternalSource,
+    Fit,
+    GroundTruthError,
+    GroundTruthReport,
+    SourceKind,
+)
 from .prompts import (
     DATASET_ASSESSMENT_SYSTEM_PROMPT,
     PAGE_ASSESSMENT_SYSTEM_PROMPT,
@@ -59,22 +65,22 @@ HELD_OUT_SPLITS = ("test", "validation", "valid", "dev", "eval")
 
 class Reachability(str, Enum):
     OK = "ok"
-    UNREACHABLE = "unreachable"    # dead link, timeout, error
-    BLOCKED = "blocked"            # refused by our own guards, or gated
-    NOT_CHECKED = "not_checked"    # nothing here worth opening
+    UNREACHABLE = "unreachable"  # dead link, timeout, error
+    BLOCKED = "blocked"  # refused by our own guards, or gated
+    NOT_CHECKED = "not_checked"  # nothing here worth opening
 
 
 class Usability(str, Enum):
     GROUND_TRUTH = "ground_truth"  # labelled data is behind this link
-    BASELINES = "baselines"        # numbers to compare against
-    BACKGROUND = "background"      # context only
+    BASELINES = "baselines"  # numbers to compare against
+    BACKGROUND = "background"  # context only
     UNUSABLE = "unusable"
 
 
 class Effort(str, Enum):
-    LOW = "low"        # fetch and score
+    LOW = "low"  # fetch and score
     MEDIUM = "medium"  # reformat, filter, or relabel a subset
-    HIGH = "high"      # substantial work, or only an overlapping task
+    HIGH = "high"  # substantial work, or only an overlapping task
 
 
 class CitedBaseline(BaseModel):
@@ -96,7 +102,9 @@ class DownloadPlan(BaseModel):
     url: str
     dataset: Optional[str] = None
     config: Optional[str] = None
-    split: Optional[str] = Field(default=None, description="Chosen held-out split, where there is one.")
+    split: Optional[str] = Field(
+        default=None, description="Chosen held-out split, where there is one."
+    )
     input_fields: List[str] = Field(default_factory=list)
     expected_field: Optional[str] = None
     rows_available: Optional[int] = None
@@ -104,7 +112,8 @@ class DownloadPlan(BaseModel):
         default=None, description="Terms the fetched data comes under, where stated."
     )
     blockers: Optional[str] = Field(
-        default=None, description="Gating or registration standing in the way of a fetch."
+        default=None,
+        description="Gating or registration standing in the way of a fetch.",
     )
 
 
@@ -125,7 +134,8 @@ class ResourceAnalysis(BaseModel):
     effort: Optional[Effort] = None
     caveats: List[str] = Field(default_factory=list)
     discarded: int = Field(
-        default=0, description="Claims dropped because the source did not bear them out."
+        default=0,
+        description="Claims dropped because the source did not bear them out.",
     )
 
 
@@ -275,7 +285,9 @@ def verify_baselines(
     for item in baselines:
         # The quote has to be on the page, and the number has to be in the quote,
         # so a real quote cannot be used to carry an invented figure.
-        if not _appears(item.quote, haystack) or not _appears(item.value, _flatten(item.quote)):
+        if not _appears(item.quote, haystack) or not _appears(
+            item.value, _flatten(item.quote)
+        ):
             discarded += 1
             continue
         kept.append(
@@ -297,7 +309,15 @@ def verify_baselines(
 # --------------------------------------------------------------------------
 
 
-def _parse(client: Any, *, model: str, instructions: str, message: str, schema, max_tokens: int):
+def _parse(
+    client: Any,
+    *,
+    model: str,
+    instructions: str,
+    message: str,
+    schema: type[BaseModel],
+    max_tokens: int,
+) -> Any:
     return client.responses.parse(
         model=model,
         instructions=instructions,
@@ -318,7 +338,12 @@ def _assess_dataset(
         model=model,
         instructions=DATASET_ASSESSMENT_SYSTEM_PROMPT,
         message=build_dataset_assessment_message(
-            task, meta.dataset, meta.columns, splits, meta.licence or "", meta.description
+            task,
+            meta.dataset,
+            meta.columns,
+            splits,
+            meta.licence or "",
+            meta.description,
         ),
         schema=DatasetAssessment,
         max_tokens=max_tokens,
@@ -406,7 +431,7 @@ def analyze_sources(
 
 
 def _analyze_one(
-    source,
+    source: ExternalSource,
     *,
     client: Any,
     model: str,
@@ -431,7 +456,8 @@ def _analyze_one(
             return analysis.model_copy(
                 update={
                     "reachability": Reachability.UNREACHABLE,
-                    "detail": meta.error or "The dataset index would not describe this.",
+                    "detail": meta.error
+                    or "The dataset index would not describe this.",
                 }
             )
 
@@ -477,27 +503,36 @@ def _analyze_one(
         blocked = (page.error or "").startswith("Refused")
         return analysis.model_copy(
             update={
-                "reachability": Reachability.BLOCKED if blocked else Reachability.UNREACHABLE,
+                "reachability": Reachability.BLOCKED
+                if blocked
+                else Reachability.UNREACHABLE,
                 "detail": page.error or "Could not be read.",
             }
         )
 
-    assessment = _assess_page(
-        client, model=model, task=task, url=source.url, text=page.text, max_tokens=max_tokens
+    page_assessment = _assess_page(
+        client,
+        model=model,
+        task=task,
+        url=source.url,
+        text=page.text,
+        max_tokens=max_tokens,
     )
     baselines, discarded = verify_baselines(
-        assessment.baselines, page.text, source=source.name, url=source.url
+        page_assessment.baselines, page.text, source=source.name, url=source.url
     )
-    kpi = _match_kpi(assessment.kpi, kpi_names)
+    kpi = _match_kpi(page_assessment.kpi, kpi_names)
 
     # The model says what the page is; what survived checking says what we have.
-    usability = assessment.contains
+    usability = page_assessment.contains
     if usability is Usability.BASELINES and not baselines:
         usability = Usability.BACKGROUND
 
     plan = (
-        DownloadPlan(what=assessment.download_hint.strip(), url=page.final_url or source.url)
-        if assessment.download_hint.strip()
+        DownloadPlan(
+            what=page_assessment.download_hint.strip(), url=page.final_url or source.url
+        )
+        if page_assessment.download_hint.strip()
         else None
     )
 
@@ -508,18 +543,20 @@ def _analyze_one(
             + (f", redirected to {page.final_url}" if page.final_url else "")
             + ".",
             "usability": usability,
-            "summary": assessment.summary,
+            "summary": page_assessment.summary,
             "covers_kpis": [kpi] if kpi else list(source.covers_kpis),
             "baselines": baselines,
             "plan": plan,
-            "effort": assessment.effort,
-            "caveats": list(assessment.caveats),
+            "effort": page_assessment.effort,
+            "caveats": list(page_assessment.caveats),
             "discarded": discarded,
         }
     )
 
 
-def _as_analysis_error(exc: Exception, settings, model: str) -> GroundTruthError:
+def _as_analysis_error(
+    exc: Exception, settings: Settings, model: str
+) -> GroundTruthError:
     mapped = _as_classifier_error(exc, settings)
     return GroundTruthError(str(mapped).replace(repr(settings.model), repr(model)))
 

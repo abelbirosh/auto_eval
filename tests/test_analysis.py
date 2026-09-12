@@ -15,7 +15,14 @@ from auto_eval.analysis import (
     plan_for_dataset,
     verify_baselines,
 )
-from auto_eval.fetch import DatasetMeta, Fetched, Split, check_url, hf_dataset_id, html_to_text
+from auto_eval.fetch import (
+    DatasetMeta,
+    Fetched,
+    Split,
+    check_url,
+    hf_dataset_id,
+    html_to_text,
+)
 from auto_eval.ground_truth import (
     Access,
     Availability,
@@ -77,7 +84,9 @@ class FakeResponses:
     def parse(self, **kwargs):
         self.calls.append(kwargs)
         parsed = self._queue.pop(0) if self._queue else None
-        return types.SimpleNamespace(output_parsed=parsed, status="completed", output=[])
+        return types.SimpleNamespace(
+            output_parsed=parsed, status="completed", output=[]
+        )
 
 
 class FakeClient:
@@ -199,7 +208,9 @@ def test_a_quoted_number_is_kept_when_the_page_says_it():
                 quote="LayoutLMv3 reaches 92.4% field accuracy on the held-out set",
             )
         ],
-        PAGE, source="s", url="https://x.org",
+        PAGE,
+        source="s",
+        url="https://x.org",
     )
     assert discarded == 0
     assert kept[0].value == "92.4%"
@@ -207,8 +218,14 @@ def test_a_quoted_number_is_kept_when_the_page_says_it():
 
 def test_an_invented_quote_is_discarded():
     kept, discarded = verify_baselines(
-        [QuotedBaseline(metric="accuracy", value="99%", quote="LayoutLMv3 reaches 99% accuracy")],
-        PAGE, source="s", url="https://x.org",
+        [
+            QuotedBaseline(
+                metric="accuracy", value="99%", quote="LayoutLMv3 reaches 99% accuracy"
+            )
+        ],
+        PAGE,
+        source="s",
+        url="https://x.org",
     )
     assert kept == []
     assert discarded == 1
@@ -223,7 +240,9 @@ def test_a_real_quote_cannot_smuggle_a_number_that_is_not_in_it():
                 quote="LayoutLMv3 reaches 92.4% field accuracy on the held-out set",
             )
         ],
-        PAGE, source="s", url="https://x.org",
+        PAGE,
+        source="s",
+        url="https://x.org",
     )
     assert kept == []
     assert discarded == 1
@@ -231,8 +250,16 @@ def test_a_real_quote_cannot_smuggle_a_number_that_is_not_in_it():
 
 def test_whitespace_differences_do_not_discard_a_real_quote():
     kept, discarded = verify_baselines(
-        [QuotedBaseline(metric="x", value="92.4%", quote="LayoutLMv3   reaches\n92.4% field accuracy")],
-        PAGE, source="s", url="https://x.org",
+        [
+            QuotedBaseline(
+                metric="x",
+                value="92.4%",
+                quote="LayoutLMv3   reaches\n92.4% field accuracy",
+            )
+        ],
+        PAGE,
+        source="s",
+        url="https://x.org",
     )
     assert len(kept) == 1
     assert discarded == 0
@@ -254,7 +281,9 @@ def test_a_dataset_is_described_from_metadata_and_never_downloaded(full_spec):
         report(source()),
         client=client,
         meta_fetcher=fake_meta,
-        text_fetcher=lambda url: pytest.fail("a dataset must not be scraped or downloaded"),
+        text_fetcher=lambda url: pytest.fail(
+            "a dataset must not be scraped or downloaded"
+        ),
     )
 
     resource = analysis.resources[0]
@@ -311,7 +340,13 @@ def test_a_page_is_read_and_its_numbers_checked(full_spec):
     )
     analysis = analyze_sources(
         full_spec,
-        report(source(name="Results page", kind=SourceKind.LEADERBOARD, url="https://x.org/results")),
+        report(
+            source(
+                name="Results page",
+                kind=SourceKind.LEADERBOARD,
+                url="https://x.org/results",
+            )
+        ),
         client=client,
         text_fetcher=lambda url: Fetched(url=url, ok=True, status=200, text=PAGE),
     )
@@ -327,12 +362,16 @@ def test_a_page_claiming_numbers_it_does_not_have_falls_back_to_background(full_
     client = FakeClient(
         PageAssessment(
             contains=Usability.BASELINES,
-            baselines=[QuotedBaseline(metric="accuracy", value="99%", quote="we hit 99%")],
+            baselines=[
+                QuotedBaseline(metric="accuracy", value="99%", quote="we hit 99%")
+            ],
         )
     )
     analysis = analyze_sources(
         full_spec,
-        report(source(name="Page", kind=SourceKind.PUBLISHED_RESULT, url="https://x.org/p")),
+        report(
+            source(name="Page", kind=SourceKind.PUBLISHED_RESULT, url="https://x.org/p")
+        ),
         client=client,
         text_fetcher=lambda url: Fetched(url=url, ok=True, text=PAGE),
     )
@@ -343,9 +382,15 @@ def test_a_page_claiming_numbers_it_does_not_have_falls_back_to_background(full_
 def test_a_dead_link_is_reported_not_swallowed(full_spec):
     analysis = analyze_sources(
         full_spec,
-        report(source(name="Dead", kind=SourceKind.PUBLISHED_RESULT, url="https://x.org/404")),
+        report(
+            source(
+                name="Dead", kind=SourceKind.PUBLISHED_RESULT, url="https://x.org/404"
+            )
+        ),
         client=FakeClient(),
-        text_fetcher=lambda url: Fetched(url=url, ok=False, status=404, error="HTTP 404."),
+        text_fetcher=lambda url: Fetched(
+            url=url, ok=False, status=404, error="HTTP 404."
+        ),
     )
     assert analysis.resources[0].reachability is Reachability.UNREACHABLE
     assert analysis.resources[0].detail == "HTTP 404."
@@ -354,7 +399,13 @@ def test_a_dead_link_is_reported_not_swallowed(full_spec):
 def test_a_url_our_own_guards_refuse_reads_as_blocked(full_spec):
     analysis = analyze_sources(
         full_spec,
-        report(source(name="Internal", kind=SourceKind.PUBLISHED_RESULT, url="http://jenkins/x")),
+        report(
+            source(
+                name="Internal",
+                kind=SourceKind.PUBLISHED_RESULT,
+                url="http://jenkins/x",
+            )
+        ),
         client=FakeClient(),
         text_fetcher=lambda url: Fetched(
             url=url, ok=False, error="Refused: jenkins is a private or local address."
@@ -366,7 +417,14 @@ def test_a_url_our_own_guards_refuse_reads_as_blocked(full_spec):
 def test_contextual_reading_material_is_not_opened_at_all(full_spec):
     analysis = analyze_sources(
         full_spec,
-        report(source(name="Blog", kind=SourceKind.OTHER, url="https://x.org/post", fit=Fit.CONTEXTUAL)),
+        report(
+            source(
+                name="Blog",
+                kind=SourceKind.OTHER,
+                url="https://x.org/post",
+                fit=Fit.CONTEXTUAL,
+            )
+        ),
         client=FakeClient(),
         text_fetcher=lambda url: pytest.fail("nothing here to open"),
     )
