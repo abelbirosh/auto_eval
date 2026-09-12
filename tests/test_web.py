@@ -126,61 +126,70 @@ def test_a_spec_that_arrives_claiming_readiness_is_re_checked(client, monkeypatc
     assert client.post("/api/ground-truth", json={"spec": payload}).status_code == 409
 
 
-def test_extract_returns_the_cases_and_the_document(client, monkeypatch, full_spec):
-    from auto_eval.extraction import GroundTruthExample, GroundTruthSet, Origin
-    from auto_eval.ground_truth import Availability, GroundTruthReport
+def test_analyze_returns_the_analysis_and_the_document(client, monkeypatch, full_spec):
+    from auto_eval.analysis import (
+        AnalysisReport,
+        DownloadPlan,
+        Reachability,
+        ResourceAnalysis,
+        Usability,
+    )
+    from auto_eval.ground_truth import Availability, GroundTruthReport, SourceKind
 
     captured = {}
 
-    def fake_extract(spec, report, **kwargs):
+    def fake_analyze(spec, report, **kwargs):
         captured["subject"] = spec.subject.name
         captured["sources"] = len(report.sources)
         captured.update(kwargs)
-        return GroundTruthSet(
+        return AnalysisReport(
             subject=spec.subject.name,
-            examples=[
-                GroundTruthExample(
-                    input="TOTAL DUE 412.55",
-                    expected="412.55",
-                    source="Acme",
+            resources=[
+                ResourceAnalysis(
+                    source="Acme invoices",
                     url="https://huggingface.co/datasets/acme/invoices",
-                    origin=Origin.DATASET_ROWS,
+                    kind=SourceKind.DATASET,
+                    reachability=Reachability.OK,
+                    usability=Usability.GROUND_TRUTH,
+                    plan=DownloadPlan(
+                        what="1,000 rows from acme/invoices",
+                        url="https://huggingface.co/datasets/acme/invoices",
+                    ),
                 )
             ],
         )
 
-    monkeypatch.setattr(web, "extract", fake_extract)
+    monkeypatch.setattr(web, "analyze_sources", fake_analyze)
 
-    report = GroundTruthReport(
-        subject="invoice extractor", verdict=Availability.LABELLED_DATA
-    )
     response = client.post(
-        "/api/extract",
+        "/api/analyze",
         json={
             "spec": analyze(full_spec).model_dump(mode="json"),
-            "report": report.model_dump(mode="json"),
-            "max_examples": 5,
+            "report": GroundTruthReport(
+                subject="invoice extractor", verdict=Availability.LABELLED_DATA
+            ).model_dump(mode="json"),
+            "model": "gpt-5",
         },
     )
 
     assert response.status_code == 200
     body = response.json()
     assert captured["subject"] == "invoice extractor"
-    assert captured["max_examples"] == 5
-    assert body["found"]["examples"][0]["expected"] == "412.55"
-    assert "Extracted ground truth" in body["markdown"]
+    assert captured["model"] == "gpt-5"
+    assert body["analysis"]["resources"][0]["plan"]["what"] == "1,000 rows from acme/invoices"
+    assert "Source analysis for invoice extractor" in body["markdown"]
 
 
-def test_extraction_errors_become_readable_400s(client, monkeypatch, full_spec):
+def test_analysis_errors_become_readable_400s(client, monkeypatch, full_spec):
     from auto_eval.ground_truth import Availability, GroundTruthError, GroundTruthReport
 
     def boom(spec, report, **kwargs):
         raise GroundTruthError("Rate limited or out of quota.")
 
-    monkeypatch.setattr(web, "extract", boom)
+    monkeypatch.setattr(web, "analyze_sources", boom)
 
     response = client.post(
-        "/api/extract",
+        "/api/analyze",
         json={
             "spec": analyze(full_spec).model_dump(mode="json"),
             "report": GroundTruthReport(

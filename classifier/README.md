@@ -14,7 +14,7 @@ guess. See [task-spec.md](task-spec.md) for the field-by-field contract.
 
 Once the spec has no blocking questions left, the [ground truth
 identifier](../ground_truth/) takes over: it searches for public data and
-baselines, then fetches them and extracts the labelled cases themselves.
+baselines, then opens each source and says what is behind it.
 
 ## Setup
 
@@ -96,5 +96,5 @@ classified, not obeyed.
 pytest
 ```
 
-117 tests, all offline — the classifier and web tests drive fakes, the gap and
+119 tests, all offline — the classifier and web tests drive fakes, the gap and
 render layers are pure functions. No test spends money.

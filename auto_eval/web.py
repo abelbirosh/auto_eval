@@ -14,10 +14,10 @@ from pydantic import BaseModel, Field
 
 from .classifier import DEFAULT_MAX_TOKENS, ClassifierError, classify
 from .config import Settings, get_settings
-from .extraction import DEFAULT_MAX_EXAMPLES, GroundTruthSet, extract
+from .analysis import AnalysisReport, analyze_sources
 from .gaps import analyze
 from .ground_truth import GroundTruthReport, gate, identify
-from .render import render_ground_truth, render_ground_truth_set, render_markdown
+from .render import render_analysis, render_ground_truth, render_markdown
 from .schema import TaskSpec
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -44,15 +44,14 @@ class GroundTruthResponse(BaseModel):
     markdown: str
 
 
-class ExtractRequest(BaseModel):
+class AnalyzeRequest(BaseModel):
     spec: TaskSpec
     report: GroundTruthReport = Field(description="A report returned by /api/ground-truth.")
     model: Optional[str] = None
-    max_examples: int = DEFAULT_MAX_EXAMPLES
 
 
-class ExtractResponse(BaseModel):
-    found: GroundTruthSet
+class AnalyzeResponse(BaseModel):
+    analysis: AnalysisReport
     markdown: str
 
 
@@ -109,24 +108,20 @@ def create_app():
 
         return GroundTruthResponse(report=report, markdown=render_ground_truth(report))
 
-    @app.post("/api/extract", response_model=ExtractResponse)
-    def extract_endpoint(request: ExtractRequest):
-        """Fetch the identified sources and pull the labelled cases out of them.
+    @app.post("/api/analyze", response_model=AnalyzeResponse)
+    def analyze_endpoint(request: AnalyzeRequest):
+        """Look at each identified source and say what to fetch from it later.
 
-        This is the one endpoint that reaches out to URLs the model proposed;
-        `auto_eval.fetch` refuses anything that is not a public http(s) address.
+        This is the one endpoint that opens URLs the model proposed. It reads
+        metadata and pages only - nothing is downloaded - and `auto_eval.fetch`
+        refuses any address that is not public.
         """
         try:
-            found = extract(
-                request.spec,
-                request.report,
-                model=request.model,
-                max_examples=request.max_examples,
-            )
+            analysis = analyze_sources(request.spec, request.report, model=request.model)
         except ClassifierError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        return ExtractResponse(found=found, markdown=render_ground_truth_set(found))
+        return AnalyzeResponse(analysis=analysis, markdown=render_analysis(analysis))
 
     return app
 
@@ -151,10 +146,10 @@ def serve(host: str = "127.0.0.1", port: int = 8000, reload: bool = False) -> No
 
 
 __all__ = [
+    "AnalyzeRequest",
+    "AnalyzeResponse",
     "ClassifyRequest",
     "ClassifyResponse",
-    "ExtractRequest",
-    "ExtractResponse",
     "GroundTruthRequest",
     "GroundTruthResponse",
     "create_app",

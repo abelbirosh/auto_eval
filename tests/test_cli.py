@@ -76,22 +76,27 @@ def test_ground_truth_reads_a_spec_file_and_prints_the_report(
     assert "Label your own." in out.read_text()
 
 
-def test_extract_flags_are_parsed():
+def test_analyze_flags_are_parsed():
     args = build_parser().parse_args(
-        ["ground-truth", "-s", "s.json", "--extract", "--max-examples", "5", "--out-dir", "data"]
+        ["ground-truth", "-s", "s.json", "--analyze", "--out-dir", "data"]
     )
-    assert args.extract is True
-    assert args.max_examples == 5
+    assert args.analyze is True
     assert args.out_dir == "data"
 
 
-def test_extracted_cases_are_written_where_a_harness_can_load_them(
+def test_the_analysis_is_written_where_a_later_step_can_pick_it_up(
     tmp_path, full_spec, capsys, monkeypatch
 ):
     from auto_eval import cli
-    from auto_eval.extraction import GroundTruthExample, GroundTruthSet, Origin
+    from auto_eval.analysis import (
+        AnalysisReport,
+        DownloadPlan,
+        Reachability,
+        ResourceAnalysis,
+        Usability,
+    )
     from auto_eval.gaps import analyze
-    from auto_eval.ground_truth import SourceFindings, assess
+    from auto_eval.ground_truth import SourceFindings, SourceKind, assess
 
     spec_file = tmp_path / "spec.json"
     spec_file.write_text(analyze(full_spec).model_dump_json())
@@ -102,28 +107,35 @@ def test_extracted_cases_are_written_where_a_harness_can_load_them(
     )
     monkeypatch.setattr(
         cli,
-        "extract",
-        lambda spec, report, **kw: GroundTruthSet(
+        "analyze_sources",
+        lambda spec, report, **kw: AnalysisReport(
             subject=spec.subject.name,
-            examples=[
-                GroundTruthExample(
-                    input="TOTAL DUE 412.55",
-                    expected="412.55",
-                    source="Acme",
+            resources=[
+                ResourceAnalysis(
+                    source="Acme invoices",
                     url="https://huggingface.co/datasets/acme/invoices",
-                    origin=Origin.DATASET_ROWS,
+                    kind=SourceKind.DATASET,
+                    reachability=Reachability.OK,
+                    usability=Usability.GROUND_TRUTH,
+                    plan=DownloadPlan(
+                        what="1,000 rows from acme/invoices",
+                        url="https://huggingface.co/datasets/acme/invoices",
+                        dataset="acme/invoices",
+                        split="validation",
+                    ),
                 )
             ],
         ),
     )
 
-    assert main(["ground-truth", "-s", str(spec_file), "--extract", "--out-dir", str(out_dir)]) == EXIT_OK
+    assert main(["ground-truth", "-s", str(spec_file), "--analyze", "--out-dir", str(out_dir)]) == EXIT_OK
 
-    lines = (out_dir / "examples.jsonl").read_text().splitlines()
-    assert json.loads(lines[0])["expected"] == "412.55"
-    assert json.loads((out_dir / "baselines.json").read_text()) == []
-    assert "Extracted ground truth" in (out_dir / "ground-truth.md").read_text()
-    assert "Extracted ground truth" in capsys.readouterr().out
+    plans = json.loads((out_dir / "fetch-plan.json").read_text())
+    assert plans[0]["dataset"] == "acme/invoices"
+    assert plans[0]["split"] == "validation"
+    assert json.loads((out_dir / "sources.json").read_text())["subject"] == "invoice extractor"
+    assert "Source analysis" in (out_dir / "sources.md").read_text()
+    assert "Source analysis" in capsys.readouterr().out
 
 
 def test_force_reaches_the_search_so_the_gate_does_not_refuse_twice(

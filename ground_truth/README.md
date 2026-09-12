@@ -1,14 +1,20 @@
 # Ground truth identifier
 
 Second block in the pipeline. Takes a `TaskSpec` the classifier has settled,
-finds what already exists online for it, and **extracts the ground truth
-itself** — labelled cases an eval harness can run on, and published numbers to
-compare against.
+finds what already exists online for it, and reports **what is behind each
+link** — so the step that actually downloads data knows exactly what it is
+getting before it gets it.
 
 Two stages, and you can stop after the first:
 
 1. **Identify** — search the web for what exists.
-2. **Extract** — fetch those sources and pull the actual cases out of them.
+2. **Analyse** — open each source and describe it: does the link resolve, what
+   columns and splits does the dataset have, what licence, what would a later
+   step have to fetch.
+
+**Nothing is downloaded here.** Datasets are read through their metadata only;
+pages are read to be described. Pulling the data itself belongs to a later
+block, and this one exists to make that pull an informed decision.
 
 Both stages keep apart two things that are easy to conflate:
 
@@ -38,30 +44,29 @@ to override it, and expect noise.
 
 ## Run
 
-The whole thing, from a request to cases on disk:
+The whole thing, from a request to a fetch plan on disk:
 
 ```bash
-auto-eval classify -f examples/request.txt --ground-truth --extract --out-dir data/
+auto-eval classify -f examples/request.txt --ground-truth --analyze --out-dir data/
 ```
 
 Or against a spec written earlier, which is the usual case — you classify, get
 questions, answer them, and only then search:
 
 ```bash
-auto-eval ground-truth -s task.json --extract --out-dir data/
+auto-eval ground-truth -s task.json --analyze --out-dir data/
 ```
 
-Drop `--extract` to stop after identification. `--out-dir` writes three files:
+Drop `--analyze` to stop after identification. `--out-dir` writes three files:
 
 | File | What's in it |
 | --- | --- |
-| `examples.jsonl` | One labelled case per line: `input`, `expected`, `kpi`, `source`, `url`, `origin`. |
-| `baselines.json` | Published numbers, each with the span of page it was quoted from. |
-| `ground-truth.md` | The document: cases, numbers, and what each source gave. |
+| `fetch-plan.json` | What a later step should fetch: dataset, config, split, input fields, answer field, how many rows, licence, blockers. |
+| `sources.json` | The full analysis of every source, including the ones that failed. |
+| `sources.md` | The same as a document. |
 
-`--max-examples` caps how many cases come back (default 20; raise it for a full
-split). It exits `2` without searching while the spec still blocks. In the web
-UI the buttons appear in the same order, each once the previous step has run.
+It exits `2` without searching while the spec still blocks. In the web UI the
+buttons appear in the same order, each once the previous step has run.
 
 ## What comes back
 
@@ -80,56 +85,80 @@ A source's `fit` is judged against this subject: `direct` (same task, same
 metric), `adaptable` (needs a subset or a reformat), `contextual` (a reference
 point only).
 
-## What extraction returns
+## What the analysis returns
 
-`GroundTruthSet`:
+One `ResourceAnalysis` per source:
 
 | Field | Meaning |
 | --- | --- |
-| `examples` | The labelled cases: `input`, `expected`, the `kpi` they score, and where each came from. |
-| `baselines` | Published numbers, each carrying the `quote` it was taken from and the URL. |
-| `outcomes` | Per source: `extracted`, `nothing_found`, `unreachable`, `unusable`, or `skipped`, with the reason and how much was discarded. |
-| `notes` | Anything that changes how to read the set. |
+| `reachability` | `ok`, `unreachable` (dead link, timeout), `blocked` (refused by our guards, or gated), `not_checked`. |
+| `usability` | `ground_truth`, `baselines`, `background`, `unusable`. |
+| `summary` | What the resource actually is. |
+| `dataset` | For a dataset: columns, splits and their row counts, licence, gated, downloads, last modified. Metadata only. |
+| `baselines` | Published numbers, each carrying the `quote` it came from. |
+| `plan` | The `DownloadPlan` — what a later step should fetch. |
+| `effort` | `low` (fetch and score), `medium` (reformat or relabel a subset), `high`. |
+| `caveats` · `discarded` | What would change the decision, and how many claims the source did not bear out. |
 
-`outcomes` is the important half of a thin result: it says which sources let you
-down and why, so what is left to label by hand is explicit rather than implied.
+The `DownloadPlan` is the handover: dataset, config, split, `input_fields`,
+`expected_field`, `rows_available`, `licence`, `blockers`. A later block can act
+on it without re-reading anything.
 
-Each example records its `origin`:
+A source that failed is still a row in the report, with the reason. That is the
+honest half of a thin result — it says which links let you down, rather than
+going quiet.
 
-- `dataset_rows` — the values came verbatim out of a dataset API.
-- `page_quote` — the values were found in a page we fetched, and checked against
-  it.
+## How each source is looked at
 
-## Where the cases come from
+**Datasets.** A Hugging Face URL is described from two metadata endpoints —
+columns, split sizes, licence, gating, downloads, last modified. No rows are
+requested. The model is then asked one narrow question: which columns are the
+input, which one holds the answer. It never sees row contents, so the prompt
+tells it to say what it cannot know rather than assume a column named `answer`
+holds what this task means by an answer. A mapping naming a column the dataset
+does not have is refused rather than used, and **the split is chosen here, not
+by the model** — held-out over `train`, because training rows are the ones a
+model has most likely already seen.
 
-**Datasets.** A Hugging Face dataset URL is read through the datasets server,
-which serves real rows of public datasets over an open API. The model is asked
-one narrow question — which columns are the input, which one holds the answer —
-and the cases are then built from the rows themselves. A held-out split is
-preferred over `train`, since training rows are the ones a model has most likely
-already seen. A mapping that names a column the data does not have is refused
-rather than used.
+**Pages.** Anything else is read as text and described. Numbers are the one
+thing carried forward, and only if quoted: `verify_baselines` checks each quote
+against the text we read, and requires the number to be inside its own quote, so
+a real quote cannot be used to carry an invented figure. Whatever fails is
+dropped and counted in `discarded`. A page claiming to hold baselines that none
+of its quotes support falls back to `background`.
 
-**Pages.** Anything else is fetched and reduced to text. The model may only
-report what it can quote, and `verify_page` checks every quote against the text
-we fetched: the quote must appear in the page, and a baseline's number must
-appear inside its own quote, so a real quote cannot be used to carry an invented
-figure. Whatever fails is dropped and counted in `discarded`.
+A source whose fit is only contextual is never opened at all.
 
-So nothing reaches `examples.jsonl` because a model said it. Either it came out
-of a dataset API, or it was found in a page we read ourselves.
+## What it is allowed to touch
 
-## Fetching, and what it is allowed to touch
+This stage is the only part of Auto_Eval that opens a URL, and those URLs were
+proposed by a model, so [fetch.py](../auto_eval/fetch.py) refuses rather than
+trusts:
 
-Extraction is the only part of Auto_Eval that reaches out to URLs, and those
-URLs were proposed by a model, so [fetch.py](../auto_eval/fetch.py) is written
-to refuse rather than trust: http(s) only, never a loopback or private address,
-a 400KB cap, a 20-second timeout, no cookies or credentials. Failure is a value,
-never an exception — an unreachable source becomes a row in `outcomes`.
+- **http(s) only.**
+- **No private address, at any hop.** The hostname is resolved and every address
+  it answers with is checked, so a public name pointing at `127.0.0.1` or at a
+  cloud metadata endpoint is refused instead of being fetched from inside
+  whatever network this runs on. Redirects are followed **by hand**, with the
+  same check on every hop — a client following them itself would jump straight
+  past the first check.
+- **A 400KB cap and a 20-second timeout**, so a link to a huge file reads the
+  first 400KB and stops.
+- **No cookies, no auth headers, no credentials.** The request carries nothing
+  identifying you, and nothing the model names can be fetched *as* you.
+- **Failure is a value.** An unreachable source becomes a row in the report
+  rather than the end of the run.
 
-Fetched pages are untrusted text from the open web, and both extraction prompts
-say so explicitly: the page is data to be extracted from, never instructions. A
-page that addresses the extractor gets reported in `notes`, not obeyed.
+One hole is left, and it is worth knowing about: a hostname that answers with a
+public address at check time and a private one at connection time would still
+get through. Closing it needs a connection pinned to the address that was
+checked.
+
+Fetched pages are untrusted text from the open web, and both prompts say so
+explicitly: the page is data to be described, never instructions. A page that
+addresses the model gets reported in `caveats`, not obeyed. Verification is the
+harder guarantee underneath that — a prompt can be talked around, a substring
+check cannot.
 
 ## How it works
 
@@ -160,19 +189,20 @@ searched on, not obeyed.
 | Path | What's in it |
 | --- | --- |
 | [ground_truth.py](../auto_eval/ground_truth.py) | The gate, the report models, the search call, and `assess`. |
-| [extraction.py](../auto_eval/extraction.py) | Field mapping, page extraction, and the verification that decides what is kept. |
-| [fetch.py](../auto_eval/fetch.py) | Guarded HTTP and the dataset rows API. |
-| [prompts.py](../auto_eval/prompts.py) | The three prompts: search, field mapping, page extraction. |
-| [render.py](../auto_eval/render.py) | `GroundTruthReport` and `GroundTruthSet` → documents. |
-| [cli.py](../auto_eval/cli.py) · [web.py](../auto_eval/web.py) | `auto-eval ground-truth` and `POST /api/ground-truth`, `/api/extract`. |
+| [analysis.py](../auto_eval/analysis.py) | Dataset and page assessment, the download plan, and the verification that decides what is kept. |
+| [fetch.py](../auto_eval/fetch.py) | Guarded HTTP and the dataset metadata endpoints. |
+| [prompts.py](../auto_eval/prompts.py) | The three prompts: search, dataset assessment, page assessment. |
+| [render.py](../auto_eval/render.py) | `GroundTruthReport` and `AnalysisReport` → documents. |
+| [cli.py](../auto_eval/cli.py) · [web.py](../auto_eval/web.py) | `auto-eval ground-truth` and `POST /api/ground-truth`, `/api/analyze`. |
 
 ## Tests
 
 ```bash
-pytest tests/test_ground_truth.py tests/test_extraction.py
+pytest tests/test_ground_truth.py tests/test_analysis.py
 ```
 
 Offline, like the rest: the model calls run against fakes, and the fetchers are
 injected, so no test touches the network or spends money. The parts that decide
-what is kept — the gate, `assess`, `examples_from_rows`, `verify_page` — are
-pure functions and are tested directly.
+what is kept — the gate, `assess`, `plan_for_dataset`, `choose_split`,
+`verify_baselines`, and the URL guards — are pure functions and are tested
+directly.

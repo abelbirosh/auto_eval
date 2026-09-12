@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from .extraction import GroundTruthSet, Outcome
+from .analysis import AnalysisReport, Reachability, Usability
 from .ground_truth import Availability, Coverage, GroundTruthReport
 from .schema import EvidenceStatus, Readiness, TaskSpec
 
@@ -28,16 +28,22 @@ COVERAGE_MARK = {
     Coverage.NONE: "nothing found",
 }
 
-OUTCOME_MARK = {
-    Outcome.EXTRACTED: "extracted",
-    Outcome.NOTHING_FOUND: "nothing in it",
-    Outcome.UNREACHABLE: "could not read",
-    Outcome.UNUSABLE: "not usable",
-    Outcome.SKIPPED: "skipped",
+REACH_MARK = {
+    Reachability.OK: "reachable",
+    Reachability.UNREACHABLE: "could not read",
+    Reachability.BLOCKED: "blocked",
+    Reachability.NOT_CHECKED: "not opened",
 }
 
-# Ground truth can be long - a dataset row carries a whole passage. The files
-# hold it in full; the document shows enough to recognise it.
+USABILITY_MARK = {
+    Usability.GROUND_TRUTH: "labelled data behind it",
+    Usability.BASELINES: "numbers to compare against",
+    Usability.BACKGROUND: "background only",
+    Usability.UNUSABLE: "not usable",
+}
+
+# A description or a quote can run long; the JSON holds it in full, the
+# document shows enough to recognise it.
 PREVIEW_CHARS = 300
 
 STATUS_MARK = {
@@ -244,80 +250,105 @@ def _preview(text: str) -> str:
     return flat[:PREVIEW_CHARS].rstrip() + " […]"
 
 
-def render_ground_truth_set(found: GroundTruthSet) -> str:
-    """The extracted ground truth as a document. The data itself is in the files."""
+def render_analysis(analysis: AnalysisReport) -> str:
+    """The per-source analysis as a document. Nothing here was downloaded."""
+    ready = [r for r in analysis.resources if r.plan and not r.plan.blockers]
     lines: List[str] = [
-        f"# Extracted ground truth for {found.subject}",
+        f"# Source analysis for {analysis.subject}",
         "",
-        f"**Labelled cases:** {len(found.examples)}  ",
-        f"**Published baselines:** {len(found.baselines)}  ",
-        f"**Sources tried:** {len(found.outcomes)}",
+        f"**Sources looked at:** {len(analysis.resources)}  ",
+        f"**With labelled data behind them:** {len(analysis.with_ground_truth)}  ",
+        f"**Ready to fetch as they are:** {len(ready)}",
+        "",
+        "Nothing below was downloaded. Each entry is the link, what is behind it, "
+        "and what a later step would have to fetch.",
+        "",
+        "## What to fetch",
         "",
     ]
 
-    if not found.usable:
+    if not analysis.plans:
+        lines += ["_No source offered anything worth fetching._", ""]
+    else:
         lines += [
-            "Nothing survived extraction. What each source did is below - that is the "
-            "answer to what has to be labelled by hand.",
-            "",
+            "| What | From | Licence | Blockers |",
+            "| --- | --- | --- | --- |",
         ]
-
-    lines += ["## Labelled cases", ""]
-    if not found.examples:
-        lines += ["_None extracted._", ""]
-    else:
-        by_source: dict = {}
-        for example in found.examples:
-            by_source.setdefault(example.source, []).append(example)
-        for source, items in by_source.items():
-            first = items[0]
-            split = f", {first.split} split" if first.split else ""
-            lines += [
-                f"**{source}** — {len(items)} case(s), {first.origin.value}{split}",
-                "",
-                "| Input | Expected | KPI |",
-                "| --- | --- | --- |",
-            ]
-            for example in items:
-                lines.append(
-                    f"| {_preview(example.input)} | {_preview(example.expected)} | "
-                    f"{example.kpi or '—'} |"
-                )
-            lines.append("")
-
-    lines += ["## Published baselines", ""]
-    if not found.baselines:
-        lines += ["_None found._", ""]
-    else:
-        lines += ["| Metric | Value | System | As of | Source |", "| --- | --- | --- | --- | --- |"]
-        for baseline in found.baselines:
+        for plan in analysis.plans:
             lines.append(
-                f"| {baseline.metric} | {baseline.value} | {baseline.system or '—'} | "
-                f"{baseline.as_of or '—'} | {baseline.source} |"
+                f"| {plan.what} | <{plan.url}> | {plan.licence or '—'} | "
+                f"{plan.blockers or '—'} |"
             )
-        lines += ["", "**Quoted from**", ""]
-        for baseline in found.baselines:
-            lines.append(f"- {baseline.metric}: \"{_preview(baseline.quote)}\" — <{baseline.url}>")
         lines.append("")
 
-    lines += [
-        "## What each source gave",
-        "",
-        "| Source | Result | Cases | Numbers | Discarded | Detail |",
-        "| --- | --- | --- | --- | --- | --- |",
-    ]
-    for item in found.outcomes:
-        lines.append(
-            f"| {item.source} | {OUTCOME_MARK[item.outcome]} | {item.examples} | "
-            f"{item.baselines} | {item.discarded} | {item.detail} |"
-        )
-    lines += ["", "## Notes", "", *_bullets(found.notes, "none"), ""]
+    lines += ["## Source by source", ""]
+    for item in analysis.resources:
+        lines += [
+            f"### {item.source}",
+            "",
+            f"`{item.kind.value}` · {REACH_MARK[item.reachability]} · "
+            f"{USABILITY_MARK[item.usability]}"
+            + (f" · effort {item.effort.value}" if item.effort else ""),
+            "",
+            f"<{item.url}>",
+            "",
+        ]
+        if item.summary:
+            lines += [item.summary, ""]
+        if item.detail:
+            lines += [f"_{item.detail}_", ""]
+        if item.covers_kpis:
+            lines += [f"Covers: {', '.join(item.covers_kpis)}", ""]
+
+        if item.dataset:
+            data = item.dataset
+            splits = ", ".join(
+                f"{s.name} ({s.rows:,} rows)" if s.rows else s.name for s in data.splits
+            )
+            lines += [
+                "| | |",
+                "| --- | --- |",
+                f"| Columns | {', '.join(data.columns) or '—'} |",
+                f"| Splits | {splits or '—'} |",
+                f"| Licence | {data.licence or 'not stated'} |",
+                f"| Gated | {'yes' if data.gated else 'no'} |",
+                f"| Downloads | {f'{data.downloads:,}' if data.downloads is not None else '—'} |",
+                f"| Last modified | {data.last_modified or '—'} |",
+                "",
+            ]
+
+        if item.plan:
+            lines += [f"**Fetch later:** {item.plan.what}", ""]
+            if item.plan.blockers:
+                lines += [f"**In the way:** {item.plan.blockers}", ""]
+
+        if item.baselines:
+            lines += ["| Metric | Value | System | As of |", "| --- | --- | --- | --- |"]
+            for value in item.baselines:
+                lines.append(
+                    f"| {value.metric} | {value.value} | {value.system or '—'} | "
+                    f"{value.as_of or '—'} |"
+                )
+            lines += ["", "**Quoted from**", ""]
+            for value in item.baselines:
+                lines.append(f'- {value.metric}: "{_preview(value.quote)}"')
+            lines.append("")
+
+        if item.discarded:
+            lines += [
+                f"_{item.discarded} claim(s) discarded: the page did not bear them out._",
+                "",
+            ]
+        if item.caveats:
+            lines += [*_bullets(item.caveats, "none"), ""]
+
+    lines += ["## Notes", "", *_bullets(analysis.notes, "none"), ""]
     return "\n".join(lines)
 
 
 __all__ = [
+    "render_analysis",
     "render_ground_truth",
-    "render_ground_truth_set",
     "render_markdown",
     "render_questions",
 ]

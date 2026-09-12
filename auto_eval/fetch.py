@@ -1,17 +1,15 @@
-"""Guarded HTTP access for the ground-truth extractor.
+"""Guarded, read-only access to the resources the identifier found.
 
-Everything fetched here comes from a URL a *model* proposed, so this module is
-written defensively: only http(s), never a private or loopback address, a hard
-byte cap, a short timeout, and no cookies or credentials of any kind. What comes
-back is untrusted data and is labelled as such everywhere it is used.
+Nothing here downloads a dataset. The block's job is to hand the next step a
+link and an analysis of what is behind it, so this module reads *about* a
+resource - does the link resolve, what columns and splits does the dataset
+have, how big is it, what licence - and never pulls the data itself.
 
-Two shapes of fetch, because public ground truth lives in two shapes:
-
-* `fetch_text` - any page, reduced to plain text so quotes can be checked
-  against what the page actually says.
-* `fetch_rows` - labelled examples straight out of the Hugging Face datasets
-  server, which serves real rows of public datasets over an open API. Rows
-  fetched this way are data, not model output; nothing has to be believed.
+Everything fetched comes from a URL a *model* proposed, so the rules are:
+http(s) only, no private or loopback address at any hop, every redirect
+re-checked, a hard byte cap, a short timeout, and no cookies or credentials of
+any kind. Failure is a value, never an exception: a source that cannot be read
+becomes a line in the report rather than the end of the run.
 """
 
 from __future__ import annotations
@@ -19,20 +17,20 @@ from __future__ import annotations
 import html
 import ipaddress
 import re
-from typing import Any, List, Optional
-from urllib.parse import quote, urlsplit
+import socket
+from typing import Any, List, Optional, Tuple
+from urllib.parse import quote, urljoin, urlsplit
 
 from pydantic import BaseModel, Field
 
-# A page only has to be big enough to hold its numbers; anything larger is a
-# download we have no business pulling into a prompt.
+# A page only has to be big enough to describe itself; more than this is a
+# download, which is not this block's business.
 MAX_BYTES = 400_000
 TIMEOUT_SECONDS = 20.0
+MAX_REDIRECTS = 4
 
-HF_ROWS_API = "https://datasets-server.huggingface.co"
-# Rows are free to fetch but not free to read: this many is enough to see the
-# shape of a dataset and seed an eval.
-DEFAULT_ROW_LIMIT = 20
+HF_DATASETS_API = "https://datasets-server.huggingface.co"
+HF_HUB_API = "https://huggingface.co/api/datasets"
 
 _SCRIPT_OR_STYLE = re.compile(r"<(script|style)\b.*?</\1>", re.IGNORECASE | re.DOTALL)
 _TAG = re.compile(r"<[^>]+>")
@@ -48,40 +46,96 @@ class Fetched(BaseModel):
     status: Optional[int] = None
     text: str = ""
     error: Optional[str] = None
+    final_url: Optional[str] = Field(
+        default=None, description="Where the redirects ended up, if they moved."
+    )
 
 
-class Rows(BaseModel):
-    """Real rows out of a public dataset."""
+class Split(BaseModel):
+    name: str
+    rows: Optional[int] = None
+    bytes: Optional[int] = None
+
+
+class DatasetMeta(BaseModel):
+    """What a dataset is, read from its metadata. No rows are fetched."""
 
     dataset: str
-    config: Optional[str] = None
-    split: Optional[str] = None
-    columns: List[str] = Field(default_factory=list)
-    rows: List[dict] = Field(default_factory=list)
-    total: Optional[int] = None
+    url: str
     ok: bool = True
     error: Optional[str] = None
+    configs: List[str] = Field(default_factory=list)
+    config: Optional[str] = Field(default=None, description="The config described below.")
+    columns: List[str] = Field(default_factory=list)
+    splits: List[Split] = Field(default_factory=list)
+    licence: Optional[str] = None
+    gated: Optional[bool] = None
+    private: Optional[bool] = None
+    downloads: Optional[int] = None
+    last_modified: Optional[str] = None
+    homepage: Optional[str] = None
+    description: str = ""
+    download_bytes: Optional[int] = None
 
 
-def _refuse(url: str, why: str) -> Fetched:
-    return Fetched(url=url, ok=False, error=why)
+# --------------------------------------------------------------------------
+# The guards
+# --------------------------------------------------------------------------
 
 
-def _is_private(host: str) -> bool:
-    """Block the obvious ways a URL can point back at the machine we run on."""
+def _is_private_literal(host: str) -> bool:
     host = host.strip("[]").lower()
     if host in ("localhost", "") or host.endswith(".local") or "." not in host:
         return True
     try:
         address = ipaddress.ip_address(host)
     except ValueError:
-        return False  # a normal hostname; DNS is not re-checked here
+        return False
+    return _is_private_address(address)
+
+
+def _is_private_address(address: Any) -> bool:
     return (
         address.is_private
         or address.is_loopback
         or address.is_link_local
         or address.is_reserved
+        or address.is_multicast
+        or address.is_unspecified
     )
+
+
+def check_url(url: str) -> Tuple[bool, str]:
+    """Is this URL one we are willing to open? Returns (allowed, why not).
+
+    The hostname is resolved and every address it answers with is checked, so a
+    public name pointing at 127.0.0.1 or at a cloud metadata endpoint is refused
+    rather than fetched from inside whatever network this runs on. DNS is
+    re-checked on every redirect hop; a name that changes its answer between
+    this check and the connection itself would still get through, which is the
+    one hole left and would need a pinned-IP connection to close.
+    """
+    parts = urlsplit(url.strip())
+    if parts.scheme not in ("http", "https"):
+        return False, "Not an http(s) URL."
+    host = parts.hostname or ""
+    if _is_private_literal(host):
+        return False, f"Refused: {host or 'that URL'} is a private or local address."
+
+    try:
+        answers = socket.getaddrinfo(host, parts.port or (443 if parts.scheme == "https" else 80))
+    except OSError as exc:
+        return False, f"Could not resolve {host}: {exc}"
+
+    for answer in answers:
+        literal = answer[4][0]
+        try:
+            address = ipaddress.ip_address(literal)
+        except ValueError:
+            continue
+        if _is_private_address(address):
+            return False, f"Refused: {host} resolves to the private address {literal}."
+    return True, ""
 
 
 def html_to_text(body: str) -> str:
@@ -94,36 +148,52 @@ def html_to_text(body: str) -> str:
 
 
 def _client(module: Any) -> Any:
+    # Redirects are followed by hand below so each hop can be re-checked; a
+    # client that followed them itself would jump straight past `check_url`.
     return module.Client(
         timeout=TIMEOUT_SECONDS,
-        follow_redirects=True,
-        headers={"user-agent": "auto-eval/0.1 (+ground-truth extractor)"},
+        follow_redirects=False,
+        headers={"user-agent": "auto-eval/0.1 (+ground-truth identifier)"},
     )
 
 
-def fetch_text(url: str) -> Fetched:
-    """Read a URL as plain text, or say why it could not be read."""
-    parts = urlsplit(url.strip())
-    if parts.scheme not in ("http", "https"):
-        return _refuse(url, "Not an http(s) URL.")
-    if _is_private(parts.hostname or ""):
-        return _refuse(url, "Refused: the URL points at a private or local address.")
+def _get(url: str, *, as_json: bool) -> Any:
+    """One guarded GET, following redirects manually. Raises on failure."""
+    import httpx
 
-    try:
-        import httpx
-    except ImportError as exc:  # pragma: no cover - depends on install state
-        return _refuse(url, f"httpx is needed to fetch sources: {exc}")
+    seen = []
+    with _client(httpx) as client:
+        for _ in range(MAX_REDIRECTS + 1):
+            allowed, why = check_url(url)
+            if not allowed:
+                raise PermissionError(why)
+            seen.append(url)
 
-    try:
-        with _client(httpx) as client:
-            with client.stream("GET", url) as response:
-                if response.status_code >= 400:
-                    return Fetched(
-                        url=url,
-                        ok=False,
-                        status=response.status_code,
-                        error=f"HTTP {response.status_code}.",
-                    )
+            if as_json:
+                response = client.get(url)
+            else:
+                response = client.send(
+                    client.build_request("GET", url), stream=True
+                )
+
+            if response.is_redirect:
+                location = response.headers.get("location", "")
+                if not as_json:
+                    response.close()
+                if not location:
+                    raise RuntimeError(f"HTTP {response.status_code} with no destination.")
+                url = urljoin(url, location)
+                continue
+
+            if response.status_code >= 400:
+                if not as_json:
+                    response.close()
+                raise RuntimeError(f"HTTP {response.status_code}.")
+
+            if as_json:
+                return response.json(), url
+
+            try:
                 chunks: List[bytes] = []
                 size = 0
                 for chunk in response.iter_bytes():
@@ -131,15 +201,46 @@ def fetch_text(url: str) -> Fetched:
                     size += len(chunk)
                     if size >= MAX_BYTES:
                         break
-                body = b"".join(chunks)[:MAX_BYTES].decode("utf-8", errors="replace")
-                return Fetched(
-                    url=url,
-                    ok=True,
-                    status=response.status_code,
-                    text=html_to_text(body),
-                )
+            finally:
+                response.close()
+            body = b"".join(chunks)[:MAX_BYTES].decode("utf-8", errors="replace")
+            return (body, response.status_code), url
+
+    raise RuntimeError(f"Too many redirects ({' -> '.join(seen)}).")
+
+
+# --------------------------------------------------------------------------
+# Reading a page
+# --------------------------------------------------------------------------
+
+
+def fetch_text(url: str) -> Fetched:
+    """Read a page as text so it can be described. Not a download."""
+    allowed, why = check_url(url)
+    if not allowed:
+        return Fetched(url=url, ok=False, error=why)
+
+    try:
+        (body, status), final = _get(url, as_json=False)
+    except ImportError as exc:  # pragma: no cover - depends on install state
+        return Fetched(url=url, ok=False, error=f"httpx is needed to read sources: {exc}")
+    except PermissionError as exc:
+        return Fetched(url=url, ok=False, error=str(exc))
     except Exception as exc:  # network, TLS, redirect loops - all the same to us
-        return _refuse(url, f"Could not fetch: {exc}")
+        return Fetched(url=url, ok=False, error=f"Could not read: {exc}")
+
+    return Fetched(
+        url=url,
+        ok=True,
+        status=status,
+        text=html_to_text(body),
+        final_url=final if final != url else None,
+    )
+
+
+# --------------------------------------------------------------------------
+# Reading about a dataset
+# --------------------------------------------------------------------------
 
 
 def hf_dataset_id(url: str) -> Optional[str]:
@@ -156,71 +257,79 @@ def hf_dataset_id(url: str) -> Optional[str]:
     return "/".join(owner_and_name)
 
 
-def _get_json(url: str) -> Any:
-    import httpx
-
-    with _client(httpx) as client:
-        response = client.get(url)
-        response.raise_for_status()
-        return response.json()
+def _json(url: str) -> Any:
+    payload, _ = _get(url, as_json=True)
+    return payload
 
 
-def fetch_rows(dataset: str, limit: int = DEFAULT_ROW_LIMIT) -> Rows:
-    """Real labelled rows from the Hugging Face datasets server.
+def fetch_dataset_meta(dataset: str, url: str = "") -> DatasetMeta:
+    """Describe a public dataset from its metadata. No rows are requested.
 
-    Public datasets only - a gated or private one comes back as a failed `Rows`
-    with the server's reason, which is exactly what the report should say.
+    Both endpoints used here report *about* the dataset - its columns, its split
+    sizes, its licence - so this says what a later download would get without
+    getting any of it.
     """
     encoded = quote(dataset, safe="/")
+    meta = DatasetMeta(dataset=dataset, url=url or f"https://huggingface.co/datasets/{dataset}")
+
     try:
-        splits = _get_json(f"{HF_ROWS_API}/splits?dataset={encoded}")
+        info = _json(f"{HF_DATASETS_API}/info?dataset={encoded}")
     except Exception as exc:
-        return Rows(dataset=dataset, ok=False, error=f"Could not list splits: {exc}")
+        return meta.model_copy(
+            update={"ok": False, "error": f"No dataset metadata available: {exc}"}
+        )
 
-    available = splits.get("splits") or []
-    if not available:
-        return Rows(dataset=dataset, ok=False, error="The dataset server lists no splits.")
+    configs = info.get("dataset_info") or {}
+    if not configs:
+        return meta.model_copy(
+            update={"ok": False, "error": "The dataset server describes no configs."}
+        )
 
-    # Prefer a held-out split: training rows are the ones a model most likely
-    # already saw, which makes them the worst choice for an eval.
-    preferred = ("test", "validation", "dev", "eval")
-    chosen = next(
-        (s for name in preferred for s in available if s.get("split") == name),
-        available[0],
+    name = next(iter(configs))
+    config = configs.get(name) or {}
+    splits = [
+        Split(name=key, rows=value.get("num_examples"), bytes=value.get("num_bytes"))
+        for key, value in (config.get("splits") or {}).items()
+    ]
+
+    meta = meta.model_copy(
+        update={
+            "configs": list(configs),
+            "config": name,
+            "columns": list(config.get("features") or {}),
+            "splits": splits,
+            "licence": config.get("license") or None,
+            "homepage": config.get("homepage") or None,
+            "description": (config.get("description") or "").strip()[:2000],
+            "download_bytes": config.get("download_size"),
+        }
     )
-    config, split = chosen.get("config"), chosen.get("split")
 
+    # The hub card carries what the data server does not: gating and licence.
     try:
-        payload = _get_json(
-            f"{HF_ROWS_API}/rows?dataset={encoded}"
-            f"&config={quote(str(config))}&split={quote(str(split))}"
-            f"&offset=0&length={int(limit)}"
-        )
-    except Exception as exc:
-        return Rows(
-            dataset=dataset,
-            config=config,
-            split=split,
-            ok=False,
-            error=f"Could not read rows: {exc}",
-        )
+        card = _json(f"{HF_HUB_API}/{encoded}")
+    except Exception:
+        return meta  # metadata is better than nothing; gating stays unknown
 
-    return Rows(
-        dataset=dataset,
-        config=config,
-        split=split,
-        columns=[f.get("name") for f in payload.get("features", []) if f.get("name")],
-        rows=[r.get("row", {}) for r in payload.get("rows", [])],
-        total=payload.get("num_rows_total"),
+    return meta.model_copy(
+        update={
+            "gated": bool(card.get("gated")),
+            "private": bool(card.get("private")),
+            "downloads": card.get("downloads"),
+            "last_modified": card.get("lastModified"),
+            "licence": meta.licence or (card.get("cardData") or {}).get("license"),
+        }
     )
 
 
 __all__ = [
-    "DEFAULT_ROW_LIMIT",
+    "DatasetMeta",
     "Fetched",
     "MAX_BYTES",
-    "Rows",
-    "fetch_rows",
+    "MAX_REDIRECTS",
+    "Split",
+    "check_url",
+    "fetch_dataset_meta",
     "fetch_text",
     "hf_dataset_id",
     "html_to_text",

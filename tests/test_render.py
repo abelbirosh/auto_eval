@@ -101,83 +101,108 @@ def test_an_empty_report_says_so_rather_than_rendering_blank(sparse_spec):
     assert "`none_found`" in md
 
 
-def _extracted():
-    from auto_eval.extraction import (
+def _analysis():
+    from auto_eval.analysis import (
+        AnalysisReport,
         CitedBaseline,
-        GroundTruthExample,
-        GroundTruthSet,
-        Origin,
-        Outcome,
-        SourceOutcome,
+        DownloadPlan,
+        Effort,
+        Reachability,
+        ResourceAnalysis,
+        Usability,
     )
+    from auto_eval.fetch import DatasetMeta, Split
+    from auto_eval.ground_truth import SourceKind
 
-    return GroundTruthSet(
+    return AnalysisReport(
         subject="invoice extractor",
-        examples=[
-            GroundTruthExample(
-                input="TOTAL DUE 412.55",
-                expected="412.55",
-                kpi="field accuracy",
+        resources=[
+            ResourceAnalysis(
                 source="Acme invoices",
                 url="https://huggingface.co/datasets/acme/invoices",
-                origin=Origin.DATASET_ROWS,
-                split="validation",
-            )
-        ],
-        baselines=[
-            CitedBaseline(
-                metric="field accuracy",
-                value="92.4%",
-                system="LayoutLMv3",
-                quote="LayoutLMv3 reaches 92.4% field accuracy",
-                source="Results page",
-                url="https://x.org/results",
-            )
-        ],
-        outcomes=[
-            SourceOutcome(
-                source="Acme invoices",
-                url="https://huggingface.co/datasets/acme/invoices",
-                outcome=Outcome.EXTRACTED,
-                detail="1 row(s) from the validation split.",
-                examples=1,
+                kind=SourceKind.DATASET,
+                reachability=Reachability.OK,
+                detail="3 column(s), 2 split(s), read from metadata only.",
+                usability=Usability.GROUND_TRUTH,
+                summary="Invoice lines with the total as the answer.",
+                covers_kpis=["field accuracy"],
+                effort=Effort.LOW,
+                dataset=DatasetMeta(
+                    dataset="acme/invoices",
+                    url="https://huggingface.co/datasets/acme/invoices",
+                    columns=["image_text", "answer"],
+                    splits=[Split(name="validation", rows=1000)],
+                    licence="cc-by-4.0",
+                    gated=False,
+                    downloads=1234,
+                ),
+                plan=DownloadPlan(
+                    what="1,000 rows from acme/invoices (default/validation), image_text -> answer",
+                    url="https://huggingface.co/datasets/acme/invoices",
+                    dataset="acme/invoices",
+                    split="validation",
+                    rows_available=1000,
+                    licence="cc-by-4.0",
+                ),
             ),
-            SourceOutcome(
+            ResourceAnalysis(
                 source="Dead link",
                 url="https://x.org/404",
-                outcome=Outcome.UNREACHABLE,
+                kind=SourceKind.PUBLISHED_RESULT,
+                reachability=Reachability.UNREACHABLE,
                 detail="HTTP 404.",
+                usability=Usability.UNUSABLE,
+            ),
+            ResourceAnalysis(
+                source="Results page",
+                url="https://x.org/results",
+                kind=SourceKind.LEADERBOARD,
+                reachability=Reachability.OK,
+                usability=Usability.BASELINES,
+                baselines=[
+                    CitedBaseline(
+                        metric="field accuracy",
+                        value="92.4%",
+                        system="LayoutLMv3",
+                        quote="LayoutLMv3 reaches 92.4% field accuracy",
+                        source="Results page",
+                        url="https://x.org/results",
+                    )
+                ],
+                discarded=1,
             ),
         ],
+        notes=["1 source(s) can be fetched as they are; the plans say what to get."],
     )
 
 
-def test_extracted_ground_truth_renders_cases_numbers_and_outcomes():
-    from auto_eval.render import render_ground_truth_set
+def test_analysis_renders_the_plan_the_dataset_and_the_failures():
+    from auto_eval.render import render_analysis
 
-    md = render_ground_truth_set(_extracted())
-    assert "# Extracted ground truth for invoice extractor" in md
-    assert "**Labelled cases:** 1" in md
-    assert "| TOTAL DUE 412.55 | 412.55 | field accuracy |" in md
-    assert "dataset_rows, validation split" in md
-    assert '"LayoutLMv3 reaches 92.4% field accuracy"' in md
-    assert "| Dead link | could not read | 0 | 0 | 0 | HTTP 404. |" in md
+    md = render_analysis(_analysis())
+    assert "# Source analysis for invoice extractor" in md
+    assert "Nothing below was downloaded" in md
+    assert "1,000 rows from acme/invoices (default/validation), image_text -> answer" in md
+    assert "| Splits | validation (1,000 rows) |" in md
+    assert "| Licence | cc-by-4.0 |" in md
+    assert "could not read" in md
+    assert "HTTP 404." in md
+    assert "1 claim(s) discarded" in md
 
 
-def test_a_long_case_is_previewed_in_the_document_not_dumped():
-    from auto_eval.render import PREVIEW_CHARS, render_ground_truth_set
+def test_a_long_quote_is_previewed_in_the_document_not_dumped():
+    from auto_eval.render import PREVIEW_CHARS, render_analysis
 
-    found = _extracted()
-    found.examples[0].input = "x" * (PREVIEW_CHARS + 500)
-    md = render_ground_truth_set(found)
+    analysis = _analysis()
+    analysis.resources[2].baselines[0].quote = "y" * (PREVIEW_CHARS + 400)
+    md = render_analysis(analysis)
     assert "[…]" in md
-    assert "x" * (PREVIEW_CHARS + 1) not in md
+    assert "y" * (PREVIEW_CHARS + 1) not in md
 
 
-def test_an_empty_extraction_says_what_to_do_next():
-    from auto_eval.extraction import GroundTruthSet
-    from auto_eval.render import render_ground_truth_set
+def test_an_empty_analysis_says_there_is_nothing_to_fetch():
+    from auto_eval.analysis import AnalysisReport
+    from auto_eval.render import render_analysis
 
-    md = render_ground_truth_set(GroundTruthSet(subject="support bot"))
-    assert "Nothing survived extraction" in md
-    assert "_None extracted._" in md
+    md = render_analysis(AnalysisReport(subject="support bot"))
+    assert "_No source offered anything worth fetching._" in md

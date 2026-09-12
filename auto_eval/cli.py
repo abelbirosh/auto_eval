@@ -10,12 +10,12 @@ from typing import List, Optional
 
 from .classifier import DEFAULT_MAX_TOKENS, ClassifierError, classify, list_models
 from .config import DEFAULT_MODEL, get_settings
-from .extraction import DEFAULT_MAX_EXAMPLES, GroundTruthSet, extract, to_jsonl
+from .analysis import AnalysisReport, analyze_sources
 from .gaps import analyze
 from .ground_truth import GroundTruthReport, gate, identify
 from .render import (
+    render_analysis,
     render_ground_truth,
-    render_ground_truth_set,
     render_markdown,
     render_questions,
 )
@@ -98,18 +98,18 @@ def _run_block(
 
     print(_format_report(report, args.format))
 
-    if not args.extract:
+    if not args.analyze:
         return
 
-    found = extract(spec, report, model=args.model, max_examples=args.max_examples)
+    analysis = analyze_sources(spec, report, model=args.model)
     print()
     print(
-        found.model_dump_json(indent=2)
+        analysis.model_dump_json(indent=2)
         if args.format == "json"
-        else render_ground_truth_set(found)
+        else render_analysis(analysis)
     )
     if args.out_dir:
-        for line in _write_set(found, Path(args.out_dir)):
+        for line in _write_analysis(analysis, Path(args.out_dir)):
             print(line, file=sys.stderr)
 
 
@@ -150,24 +150,24 @@ def _cmd_ground_truth(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def _write_set(found: GroundTruthSet, out_dir: Path) -> List[str]:
-    """Write the cases where a harness can load them, one file per kind."""
+def _write_analysis(analysis: AnalysisReport, out_dir: Path) -> List[str]:
+    """Write the analysis where a later step can pick it up."""
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []
 
-    cases = out_dir / "examples.jsonl"
-    cases.write_text(to_jsonl(found.examples) + "\n" if found.examples else "", encoding="utf-8")
-    written.append(f"Wrote {len(found.examples)} case(s) to {cases}")
+    sources = out_dir / "sources.json"
+    sources.write_text(analysis.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    written.append(f"Wrote {len(analysis.resources)} source analysis to {sources}")
 
-    baselines = out_dir / "baselines.json"
-    baselines.write_text(
-        json.dumps([b.model_dump() for b in found.baselines], indent=2) + "\n",
+    plans = out_dir / "fetch-plan.json"
+    plans.write_text(
+        json.dumps([plan.model_dump() for plan in analysis.plans], indent=2) + "\n",
         encoding="utf-8",
     )
-    written.append(f"Wrote {len(found.baselines)} baseline(s) to {baselines}")
+    written.append(f"Wrote {len(analysis.plans)} fetch plan(s) to {plans}")
 
-    document = out_dir / "ground-truth.md"
-    document.write_text(render_ground_truth_set(found) + "\n", encoding="utf-8")
+    document = out_dir / "sources.md"
+    document.write_text(render_analysis(analysis) + "\n", encoding="utf-8")
     written.append(f"Wrote {document}")
     return written
 
@@ -200,20 +200,14 @@ def _cmd_schema(args: argparse.Namespace) -> int:
 def _add_extraction_flags(parser: argparse.ArgumentParser) -> None:
     """Shared by both commands that can run the ground-truth block."""
     parser.add_argument(
-        "--extract",
+        "--analyze",
         action="store_true",
-        help="Fetch the identified sources and pull the labelled cases out of them.",
-    )
-    parser.add_argument(
-        "--max-examples",
-        type=int,
-        default=DEFAULT_MAX_EXAMPLES,
-        help=f"Cases to extract at most. Default {DEFAULT_MAX_EXAMPLES}.",
+        help="Look at each source found and say what a later step should fetch from it.",
     )
     parser.add_argument(
         "--out-dir",
         metavar="PATH",
-        help="Write examples.jsonl, baselines.json, and the report here.",
+        help="Write sources.json, fetch-plan.json, and the document here.",
     )
 
 
@@ -266,7 +260,7 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Takes a spec written by `classify --json`, or classifies a request first. "
             "Searches the web for labelled datasets, benchmarks, and published "
-            "baselines; --extract then fetches them and pulls out the cases. "
+            "baselines; --analyze then looks at each one and says what to fetch. "
             f"Exits {EXIT_INSUFFICIENT} without searching while the spec still has "
             "blocking questions."
         ),
