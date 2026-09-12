@@ -1,6 +1,12 @@
 # Secrets - never commit
 .env
 
+# Impeccable design tooling - reinstall with `npx impeccable install`.
+# Ships a 12MB platform-specific binary, so it does not belong in git.
+.claude/skills/
+.claude/agents/impeccable-*
+.claude/settings.local.json
+
 # Python
 __pycache__/
 *.py[cod]
