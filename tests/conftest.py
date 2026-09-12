@@ -34,6 +34,16 @@ def sparse_spec() -> TaskSpec:
 
 
 @pytest.fixture
+def subjectless_spec() -> TaskSpec:
+    """The one shape that still blocks: nothing names a thing to test."""
+    return TaskSpec(
+        title="Unclear request",
+        summary="The request does not say what should be evaluated.",
+        subject=Subject(name="", kind=SubjectKind.OTHER, description=""),
+    )
+
+
+@pytest.fixture
 def full_spec() -> TaskSpec:
     """A spec with every gap filled - the only shape that should read as ready."""
     return TaskSpec(

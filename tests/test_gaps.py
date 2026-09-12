@@ -133,7 +133,7 @@ def test_readiness_levels():
 
 def test_analyze_overrides_model_supplied_readiness(sparse_spec):
     sparse_spec.readiness = Readiness.READY
-    assert analyze(sparse_spec).readiness is Readiness.INSUFFICIENT
+    assert analyze(sparse_spec).readiness is Readiness.NEEDS_INPUT
 
 
 def test_merge_drops_a_reworded_echo_of_a_rule_question():

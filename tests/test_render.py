@@ -23,15 +23,20 @@ def test_full_spec_renders_every_section(full_spec):
 
 
 def test_sparse_spec_renders_without_kpis_or_evidence(sparse_spec):
-    md = render_markdown(analyze(sparse_spec))
+    md = render_markdown(sparse_spec)  # raw: `analyze` would derive a KPI
     assert "_No KPIs identified" in md
     assert "_Nothing supplied" in md
     assert "_not stated_" in md
-    assert "**[blocking]**" in md
 
 
-def test_questions_view_numbers_and_flags(sparse_spec):
-    text = render_questions(analyze(sparse_spec))
+def test_a_derived_kpi_is_rendered_as_inferred(sparse_spec):
+    md = render_markdown(analyze(sparse_spec))
+    assert "task success rate" in md
+    assert "inferred" in md
+
+
+def test_questions_view_numbers_and_flags(subjectless_spec):
+    text = render_questions(analyze(subjectless_spec))
     assert text.startswith("1. ")
     assert "**[blocking]**" in text
     assert "`subject.interface`" in text

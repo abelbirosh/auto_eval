@@ -21,6 +21,9 @@ def test_index_serves_the_page(client):
     assert response.status_code == 200
     assert "Auto_Eval" in response.text
     assert "/api/classify" in response.text
+    # The page posts answers back and gates the button on them being filled.
+    assert "submitAnswers" in response.text
+    assert "still to answer" in response.text
 
 
 def test_health_reports_key_and_model(client, monkeypatch):
@@ -48,8 +51,9 @@ def test_classify_returns_spec_and_markdown(client, monkeypatch, sparse_spec):
     assert response.status_code == 200
     body = response.json()
     assert captured["text"] == "evaluate my support bot"
-    assert body["spec"]["readiness"] == "insufficient"
-    assert any(q["blocking"] for q in body["spec"]["open_questions"])
+    # Thin, but nothing a derived KPI cannot carry, so it is not blocked.
+    assert body["spec"]["readiness"] == "needs_input"
+    assert not any(q["blocking"] for q in body["spec"]["open_questions"])
     assert "# Support bot quality" in body["markdown"]
 
 
@@ -63,6 +67,52 @@ def test_model_override_reaches_the_classifier(client, monkeypatch, sparse_spec)
     monkeypatch.setattr(web, "classify", fake_classify)
     client.post("/api/classify", json={"text": "x", "model": "gpt-4o-mini"})
     assert captured["model"] == "gpt-4o-mini"
+
+
+def test_answers_reach_the_classifier(client, monkeypatch, full_spec):
+    """The answers typed into the blocking boxes go back with the request."""
+    captured = {}
+
+    def fake_classify(text, **kwargs):
+        captured["text"] = text
+        captured.update(kwargs)
+        return analyze(full_spec)
+
+    monkeypatch.setattr(web, "classify", fake_classify)
+
+    response = client.post(
+        "/api/classify",
+        json={
+            "text": "evaluate my support bot",
+            "answers": [
+                {
+                    "field": "kpis",
+                    "question": "What would make this good enough to ship?",
+                    "answer": "Policy accuracy, 90% or better.",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["text"] == "evaluate my support bot"
+    assert [a.answer for a in captured["answers"]] == [
+        "Policy accuracy, 90% or better."
+    ]
+    # The blocking question is gone, which is what the boxes were for.
+    assert not any(q["blocking"] for q in response.json()["spec"]["open_questions"])
+
+
+def test_answers_are_optional(client, monkeypatch, sparse_spec):
+    captured = {}
+
+    def fake_classify(text, **kwargs):
+        captured.update(kwargs)
+        return analyze(sparse_spec)
+
+    monkeypatch.setattr(web, "classify", fake_classify)
+    assert client.post("/api/classify", json={"text": "x"}).status_code == 200
+    assert list(captured["answers"]) == []
 
 
 def test_classifier_errors_become_readable_400s(client, monkeypatch):
@@ -109,7 +159,7 @@ def test_ground_truth_returns_a_report_for_an_unblocked_spec(
 
 
 def test_ground_truth_refuses_a_spec_that_still_blocks(
-    client, monkeypatch, sparse_spec
+    client, monkeypatch, subjectless_spec
 ):
     def boom(spec, **kwargs):  # pragma: no cover - must not be reached
         raise AssertionError("the gate should have stopped this")
@@ -117,7 +167,8 @@ def test_ground_truth_refuses_a_spec_that_still_blocks(
     monkeypatch.setattr(web, "identify", boom)
 
     response = client.post(
-        "/api/ground-truth", json={"spec": analyze(sparse_spec).model_dump(mode="json")}
+        "/api/ground-truth",
+        json={"spec": analyze(subjectless_spec).model_dump(mode="json")},
     )
 
     assert response.status_code == 409
@@ -125,10 +176,10 @@ def test_ground_truth_refuses_a_spec_that_still_blocks(
 
 
 def test_a_spec_that_arrives_claiming_readiness_is_re_checked(
-    client, monkeypatch, sparse_spec
+    client, monkeypatch, subjectless_spec
 ):
     """The gate reads the questions, not the readiness field the caller sent."""
-    payload = analyze(sparse_spec).model_dump(mode="json")
+    payload = analyze(subjectless_spec).model_dump(mode="json")
     payload["readiness"] = "ready"
 
     monkeypatch.setattr(web, "identify", lambda spec, **kw: None)

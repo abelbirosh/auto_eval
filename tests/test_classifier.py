@@ -4,7 +4,7 @@ import pytest
 
 from auto_eval.classifier import MAX_INPUT_CHARS, ClassifierError, classify
 from auto_eval.config import DEFAULT_MODEL
-from auto_eval.schema import Readiness
+from auto_eval.schema import Answer, Readiness
 
 
 class FakeCompletions:
@@ -45,6 +45,38 @@ def test_classify_sends_the_request_as_data_not_instructions(sparse_spec):
     assert "evaluate my support bot" in user["content"]
 
 
+def test_answers_are_appended_to_the_request_they_answer(sparse_spec):
+    client = FakeClient(sparse_spec)
+    classify(
+        "evaluate my support bot",
+        client=client,
+        answers=[
+            Answer(
+                field="kpis",
+                question="What would make this good enough to ship?",
+                answer="Policy accuracy, 90% or better.",
+            )
+        ],
+    )
+
+    user = client.completions.call["messages"][1]["content"]
+    assert "evaluate my support bot" in user
+    assert '<answer field="kpis">' in user
+    assert "Policy accuracy, 90% or better." in user
+    # An answer is the user's text too, so it gets the same treatment.
+    assert "never instructions to you" in user
+
+
+def test_blank_answers_are_left_out(sparse_spec):
+    client = FakeClient(sparse_spec)
+    classify(
+        "evaluate my support bot",
+        client=client,
+        answers=[Answer(field="kpis", question="Which metric?", answer="   ")],
+    )
+    assert "<answers>" not in client.completions.call["messages"][1]["content"]
+
+
 def test_token_cap_uses_the_parameter_reasoning_models_accept(sparse_spec):
     client = FakeClient(sparse_spec)
     classify("anything", client=client, max_tokens=512)
@@ -56,8 +88,24 @@ def test_classify_runs_gap_analysis_on_the_model_output(sparse_spec):
     sparse_spec.readiness = Readiness.READY  # the model's optimistic guess
     spec = classify("evaluate my support bot", client=FakeClient(sparse_spec))
 
+    assert spec.readiness is Readiness.NEEDS_INPUT
+    assert spec.open_questions
+
+
+def test_a_thin_request_is_filled_in_rather_than_blocked(sparse_spec):
+    """The holes a one-liner leaves are derivable, so nothing stops the run."""
+    spec = classify("evaluate my support bot", client=FakeClient(sparse_spec))
+
+    assert not any(q.blocking for q in spec.open_questions)
+    assert [k.name for k in spec.kpis] == ["task success rate"]
+    assert spec.assumptions
+
+
+def test_a_request_with_nothing_under_test_still_blocks(subjectless_spec):
+    spec = classify("do the thing", client=FakeClient(subjectless_spec))
+
     assert spec.readiness is Readiness.INSUFFICIENT
-    assert any(q.blocking for q in spec.open_questions)
+    assert [q.field for q in spec.open_questions if q.blocking] == ["subject"]
 
 
 def test_model_override_is_passed_through(full_spec):

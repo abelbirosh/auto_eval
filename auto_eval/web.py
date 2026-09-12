@@ -8,7 +8,7 @@ here, so do not bind it to a public interface.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -18,13 +18,17 @@ from .config import get_settings
 from .gaps import analyze
 from .ground_truth import GroundTruthReport, gate, identify
 from .render import render_analysis, render_ground_truth, render_markdown
-from .schema import TaskSpec
+from .schema import Answer, TaskSpec
 
 STATIC_DIR = Path(__file__).parent / "static"
 
 
 class ClassifyRequest(BaseModel):
     text: str = Field(description="The free-form evaluation request.")
+    answers: List[Answer] = Field(
+        default_factory=list,
+        description="Replies to questions an earlier classification asked.",
+    )
     model: Optional[str] = None
 
 
@@ -82,7 +86,10 @@ def create_app():
     def classify_endpoint(request: ClassifyRequest) -> ClassifyResponse:
         try:
             spec = classify(
-                request.text, model=request.model, max_tokens=DEFAULT_MAX_TOKENS
+                request.text,
+                answers=request.answers,
+                model=request.model,
+                max_tokens=DEFAULT_MAX_TOKENS,
             )
         except ClassifierError as exc:
             # The message is already written to be shown to a person.

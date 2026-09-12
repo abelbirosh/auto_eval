@@ -179,6 +179,14 @@ class Question(BaseModel):
     )
 
 
+class Answer(BaseModel):
+    """A user's reply to one `Question`, fed back into a re-classification."""
+
+    field: str = Field(description="The dotted path the answered question carried.")
+    question: str = Field(description="The question as it was put to the user.")
+    answer: str = Field(description="What the user replied, in their own words.")
+
+
 class Confidence(BaseModel):
     """How much of the spec came from the user rather than from inference."""
 
@@ -219,6 +227,7 @@ class TaskSpec(BaseModel):
 
 __all__ = [
     "KPI",
+    "Answer",
     "Confidence",
     "Direction",
     "EvalType",

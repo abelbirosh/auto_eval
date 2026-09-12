@@ -7,12 +7,12 @@ deterministic and testable without a network call.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 from .config import API_KEY_VAR, Settings, get_settings
 from .gaps import analyze
 from .prompts import SYSTEM_PROMPT, build_user_message
-from .schema import TaskSpec
+from .schema import Answer, TaskSpec
 
 # Extraction on a short input, run on every request, so it goes to the cheap
 # tier. Raise it with --model or AUTO_EVAL_MODEL if specs come back thin.
@@ -51,11 +51,16 @@ def _build_client(settings: Settings) -> Any:
 def classify(
     text: str,
     *,
+    answers: Sequence[Answer] = (),
     client: Optional[Any] = None,
     model: Optional[str] = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
 ) -> TaskSpec:
     """Classify a free-form evaluation request into a `TaskSpec`.
+
+    `answers` are replies to questions an earlier pass asked. They are appended
+    to the same request and the whole thing is classified again, so a spec is
+    always the product of one call rather than a patched-up earlier one.
 
     The returned spec always carries the merged rule/model questions and a
     computed `readiness`; the model's own readiness guess is discarded.
@@ -76,7 +81,7 @@ def classify(
             model=settings.model,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": build_user_message(text)},
+                {"role": "user", "content": build_user_message(text, answers)},
             ],
             response_format=TaskSpec,
             # Reasoning-capable models reject `max_tokens`; this is its successor.

@@ -43,14 +43,14 @@ def test_ground_truth_parser_takes_a_spec_or_text():
 
 
 def test_ground_truth_exits_two_without_searching_when_something_blocks(
-    tmp_path, sparse_spec, capsys, monkeypatch
+    tmp_path, subjectless_spec, capsys, monkeypatch
 ):
     from auto_eval import cli
     from auto_eval.cli import EXIT_INSUFFICIENT
     from auto_eval.gaps import analyze
 
     spec_file = tmp_path / "spec.json"
-    spec_file.write_text(analyze(sparse_spec).model_dump_json())
+    spec_file.write_text(analyze(subjectless_spec).model_dump_json())
 
     called = []
     monkeypatch.setattr(cli, "identify", lambda *a, **kw: called.append(a))
