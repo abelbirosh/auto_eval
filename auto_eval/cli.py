@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
+from .agent import agent_gate, profile
 from .analysis import AnalysisReport, analyze_sources
 from .benchmarks import CATALOGUE, Benchmark, BenchmarkMatch, match
 from .classifier import DEFAULT_MAX_TOKENS, ClassifierError, classify, list_models
@@ -16,11 +17,19 @@ from .gaps import analyze
 from .ground_truth import GroundTruthReport, gate, identify
 from .render import (
     render_analysis,
+    render_case,
     render_ground_truth,
     render_markdown,
+    render_profile,
     render_questions,
+    render_suite,
 )
 from .schema import Readiness, TaskSpec
+from .suite import SuiteError
+from .suite import build as build_suite
+from .suite import load as load_suite
+from .suite import write as write_suite
+from .surface import DEFAULT_PER_CELL
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -233,6 +242,75 @@ def _cmd_benchmarks(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_profile(args: argparse.Namespace) -> int:
+    """What we can drive, and whether that is enough to author a suite against."""
+    spec = _load_spec(args)
+    agent_profile = profile(spec)
+    decision = agent_gate(spec, agent_profile)
+
+    if args.format == "json":
+        print(
+            json.dumps(
+                {
+                    "profile": agent_profile.model_dump(mode="json"),
+                    "gate": decision.model_dump(mode="json"),
+                },
+                indent=2,
+            )
+        )
+    else:
+        print(render_profile(agent_profile, decision))
+
+    return EXIT_OK if decision.open else EXIT_INSUFFICIENT
+
+
+def _cmd_author(args: argparse.Namespace) -> int:
+    """Write the suite. Deterministic and offline - no model call, no network."""
+    spec = _load_spec(args)
+
+    try:
+        suite = build_suite(spec, per_cell=args.per_cell, force=args.force)
+    except SuiteError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        print(render_questions(spec), file=sys.stderr)
+        return EXIT_INSUFFICIENT
+
+    document = render_suite(suite)
+    if args.format == "json":
+        print(suite.model_dump_json(indent=2))
+    else:
+        print(document)
+
+    if args.out_dir:
+        for line in write_suite(suite, Path(args.out_dir), document=document):
+            print(line, file=sys.stderr)
+
+    return EXIT_OK
+
+
+def _cmd_suite(args: argparse.Namespace) -> int:
+    """Read a written suite back: what it covers, or one case in full."""
+    suite = load_suite(Path(args.path))
+
+    if args.case:
+        found = [c for c in suite.cases if c.id.startswith(args.case)]
+        if not found:
+            print(
+                f"error: no case in {args.path} starts with {args.case!r}",
+                file=sys.stderr,
+            )
+            return EXIT_ERROR
+        for case in found:
+            print(render_case(case))
+        return EXIT_OK
+
+    if args.format == "json":
+        print(suite.model_dump_json(indent=2))
+    else:
+        print(render_suite(suite))
+    return EXIT_OK
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     from .web import serve
 
@@ -362,6 +440,99 @@ def build_parser() -> argparse.ArgumentParser:
     _add_extraction_flags(gt_cmd)
     gt_cmd.set_defaults(func=_cmd_ground_truth)
 
+    profile_cmd = sub.add_parser(
+        "profile",
+        help="What it takes to run the agent under test, and whether we can.",
+        description=(
+            "Reads the operational facts about an agent off its spec - entry point, "
+            "tools, ceilings, isolation - and says whether a suite can be authored "
+            f"against it. Offline. Exits {EXIT_INSUFFICIENT} when something blocks."
+        ),
+    )
+    profile_cmd.add_argument("text", nargs="*", help="The request, as text.")
+    profile_cmd.add_argument("-f", "--file", help="Read the request from a file.")
+    profile_cmd.add_argument(
+        "-s", "--spec", metavar="PATH", help="A spec JSON to profile."
+    )
+    profile_cmd.add_argument(
+        "--format",
+        choices=["markdown", "json"],
+        default="markdown",
+        help="Stdout format.",
+    )
+    profile_cmd.add_argument(
+        "--model",
+        default=None,
+        help="Model to classify with, when given a request rather than a spec.",
+    )
+    profile_cmd.add_argument(
+        "--max-tokens", type=int, default=DEFAULT_MAX_TOKENS, help=argparse.SUPPRESS
+    )
+    profile_cmd.set_defaults(func=_cmd_profile)
+
+    author_cmd = sub.add_parser(
+        "author",
+        help="Write an eval suite for an agent.",
+        description=(
+            "Builds the cases, their checks, and the coverage grid they answer to. "
+            "Deterministic and offline: the same spec produces the same suite, digest "
+            "and all. Nothing is run and no fixture is materialised - the suite says "
+            f"what has to exist before it can be. Exits {EXIT_INSUFFICIENT} when the "
+            "agent cannot be run and --force was not passed."
+        ),
+    )
+    author_cmd.add_argument("text", nargs="*", help="The request, as text.")
+    author_cmd.add_argument("-f", "--file", help="Read the request from a file.")
+    author_cmd.add_argument(
+        "-s", "--spec", metavar="PATH", help="A spec JSON to author from."
+    )
+    author_cmd.add_argument(
+        "-o", "--out-dir", metavar="PATH", help="Write suite.json and suite.md here."
+    )
+    author_cmd.add_argument(
+        "--per-cell",
+        type=int,
+        default=DEFAULT_PER_CELL,
+        help=f"Cases per cell of the coverage grid (default {DEFAULT_PER_CELL}).",
+    )
+    author_cmd.add_argument(
+        "--force", action="store_true", help="Author even when the agent cannot be run."
+    )
+    author_cmd.add_argument(
+        "--format",
+        choices=["markdown", "json"],
+        default="markdown",
+        help="Stdout format.",
+    )
+    author_cmd.add_argument(
+        "--model",
+        default=None,
+        help="Model to classify with, when given a request rather than a spec.",
+    )
+    author_cmd.add_argument(
+        "--max-tokens", type=int, default=DEFAULT_MAX_TOKENS, help=argparse.SUPPRESS
+    )
+    author_cmd.set_defaults(func=_cmd_author)
+
+    suite_cmd = sub.add_parser(
+        "suite",
+        help="Read back a suite written by `author`.",
+        description="Prints what a written suite covers, or one case in full with --case.",
+    )
+    suite_cmd.add_argument(
+        "path", help="The directory `author -o` wrote, or the suite.json itself."
+    )
+    suite_cmd.add_argument(
+        "--case", metavar="ID", help="Print this case in full; an id prefix is enough."
+    )
+    suite_cmd.add_argument(
+        "--format",
+        choices=["markdown", "json"],
+        default="markdown",
+        help="Stdout format.",
+    )
+    suite_cmd.set_defaults(func=_cmd_suite)
+
     serve_cmd = sub.add_parser(
         "serve",
         help="Run the local web UI.",
@@ -416,6 +587,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)
+    except SuiteError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_INSUFFICIENT
     except ClassifierError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_ERROR

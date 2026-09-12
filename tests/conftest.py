@@ -97,3 +97,49 @@ def full_spec() -> TaskSpec:
         ),
         confidence=Confidence(subject=0.9, kpis=0.9, evidence=0.8, overall=0.87),
     )
+
+
+@pytest.fixture
+def agent_spec() -> TaskSpec:
+    """An agent with tools, somewhere safe to run, and runs of its own to harvest."""
+    return TaskSpec(
+        title="Support agent",
+        summary="Evaluate the support agent that issues refunds and looks up orders.",
+        subject=Subject(
+            name="support agent",
+            kind=SubjectKind.AGENT,
+            description="Answers customer email, looks orders up in the database, issues refunds.",
+            interface="POST /v1/runs",
+            inputs="a customer message",
+            outputs="JSON with a reply and an action",
+            in_scope=["refund requests", "order lookups"],
+            out_of_scope=["phone calls"],
+        ),
+        eval_types=[EvalType.CAPABILITY, EvalType.SAFETY],
+        kpis=[
+            KPI(
+                name="task success rate",
+                kind=MetricKind.QUANTITATIVE,
+                definition="Share of runs that resolved the customer's request correctly.",
+                measurement=Measurement.LLM_JUDGE,
+                direction=Direction.MAXIMIZE,
+                unit="%",
+                target=">= 90%",
+                priority=Priority.PRIMARY,
+                source=Provenance.STATED,
+            )
+        ],
+        evidence=[
+            EvidenceItem(
+                kind=EvidenceKind.SUCCESSFUL_RUN,
+                reference="12 accepted refund transcripts",
+                status=EvidenceStatus.PROVIDED,
+            ),
+            EvidenceItem(
+                kind=EvidenceKind.FAILURE_CASE,
+                reference="double refund on 3 May",
+                status=EvidenceStatus.PROVIDED,
+            ),
+        ],
+        constraints=["all runs happen in a docker sandbox against a test account"],
+    )
