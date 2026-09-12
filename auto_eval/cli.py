@@ -10,7 +10,9 @@ from typing import List, Optional
 
 from .classifier import DEFAULT_MAX_TOKENS, ClassifierError, classify, list_models
 from .config import DEFAULT_MODEL, get_settings
-from .render import render_markdown, render_questions
+from .gaps import analyze
+from .ground_truth import GroundTruthReport, gate, identify
+from .render import render_ground_truth, render_markdown, render_questions
 from .schema import Readiness, TaskSpec
 
 EXIT_OK = 0
@@ -18,7 +20,7 @@ EXIT_ERROR = 1
 EXIT_INSUFFICIENT = 2  # spec has blocking questions - scripts can gate on this
 
 
-def _read_input(args: argparse.Namespace) -> str:
+def _read_input(args: argparse.Namespace, extra_hint: str = "") -> str:
     if args.file:
         return Path(args.file).read_text(encoding="utf-8")
     if args.text:
@@ -26,6 +28,7 @@ def _read_input(args: argparse.Namespace) -> str:
     if sys.stdin.isatty():
         raise ClassifierError(
             "No input. Pass text as an argument, use -f FILE, or pipe on stdin."
+            + extra_hint
         )
     return sys.stdin.read()
 
@@ -52,7 +55,64 @@ def _cmd_classify(args: argparse.Namespace) -> int:
         written = " and ".join(p for p in (args.md, args.json) if p)
         print(f"\nWrote {written}", file=sys.stderr)
 
+    if args.ground_truth:
+        decision = gate(spec)
+        if not decision.open:
+            print(f"\nSkipping the ground-truth search: {decision.reason}", file=sys.stderr)
+        else:
+            report = identify(spec, model=args.model, max_tokens=args.max_tokens)
+            print()
+            print(_format_report(report, args.format))
+
     return EXIT_INSUFFICIENT if spec.readiness is Readiness.INSUFFICIENT else EXIT_OK
+
+
+def _format_report(report: GroundTruthReport, fmt: str) -> str:
+    if fmt == "json":
+        return report.model_dump_json(indent=2)
+    return render_ground_truth(report)
+
+
+def _load_spec(args: argparse.Namespace) -> TaskSpec:
+    """A spec from disk, or a fresh classification of the request text.
+
+    Gap analysis is re-run on a loaded spec so a hand-edited file is gated on
+    what it says now rather than on the readiness recorded when it was written.
+    """
+    if args.spec:
+        spec = TaskSpec.model_validate_json(Path(args.spec).read_text(encoding="utf-8"))
+        return analyze(spec)
+    text = _read_input(args, " Or point at a spec JSON with -s PATH.")
+    return classify(text, model=args.model, max_tokens=args.max_tokens)
+
+
+def _cmd_ground_truth(args: argparse.Namespace) -> int:
+    spec = _load_spec(args)
+
+    decision = gate(spec)
+    if not decision.open and not args.force:
+        print(f"Not ready to search: {decision.reason}", file=sys.stderr)
+        print(render_questions(spec), file=sys.stderr)
+        return EXIT_INSUFFICIENT
+
+    report = identify(
+        spec, model=args.model, max_tokens=args.max_tokens, force=args.force
+    )
+
+    if args.json:
+        Path(args.json).write_text(
+            report.model_dump_json(indent=2) + "\n", encoding="utf-8"
+        )
+    if args.md:
+        Path(args.md).write_text(render_ground_truth(report) + "\n", encoding="utf-8")
+
+    print(_format_report(report, args.format))
+
+    if args.json or args.md:
+        written = " and ".join(p for p in (args.md, args.json) if p)
+        print(f"\nWrote {written}", file=sys.stderr)
+
+    return EXIT_OK
 
 
 def _cmd_serve(args: argparse.Namespace) -> int:
@@ -115,7 +175,47 @@ def build_parser() -> argparse.ArgumentParser:
     )
     classify_cmd.add_argument("--json", metavar="PATH", help="Also write the spec as JSON.")
     classify_cmd.add_argument("--md", metavar="PATH", help="Also write the task document.")
+    classify_cmd.add_argument(
+        "--ground-truth",
+        action="store_true",
+        help="Search for public ground truth afterwards, if nothing is blocking.",
+    )
     classify_cmd.set_defaults(func=_cmd_classify)
+
+    gt_cmd = sub.add_parser(
+        "ground-truth",
+        help="Find public ground truth and baselines for a task spec.",
+        description=(
+            "Takes a spec written by `classify --json`, or classifies a request first. "
+            "Searches the web for labelled datasets, benchmarks, and published "
+            f"baselines. Exits {EXIT_INSUFFICIENT} without searching while the spec "
+            "still has blocking questions."
+        ),
+    )
+    gt_cmd.add_argument("text", nargs="*", help="The request, as text.")
+    gt_cmd.add_argument("-f", "--file", help="Read the request from a file.")
+    gt_cmd.add_argument(
+        "-s", "--spec", metavar="PATH", help="Use a spec JSON instead of classifying."
+    )
+    gt_cmd.add_argument(
+        "--model",
+        default=None,
+        help="Model to search with. Defaults to AUTO_EVAL_SEARCH_MODEL, else AUTO_EVAL_MODEL.",
+    )
+    gt_cmd.add_argument(
+        "--max-tokens", type=int, default=DEFAULT_MAX_TOKENS, help="Output token cap."
+    )
+    gt_cmd.add_argument(
+        "--format", choices=["markdown", "json"], default="markdown", help="Stdout format."
+    )
+    gt_cmd.add_argument("--json", metavar="PATH", help="Also write the report as JSON.")
+    gt_cmd.add_argument("--md", metavar="PATH", help="Also write the report document.")
+    gt_cmd.add_argument(
+        "--force",
+        action="store_true",
+        help="Search even while blocking questions are open.",
+    )
+    gt_cmd.set_defaults(func=_cmd_ground_truth)
 
     serve_cmd = sub.add_parser(
         "serve",

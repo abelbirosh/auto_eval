@@ -12,6 +12,10 @@ It extracts three things and then says what's missing:
 Anything the user didn't supply becomes an explicit question rather than a
 guess. See [task-spec.md](task-spec.md) for the field-by-field contract.
 
+Once the spec has no blocking questions left, the [ground truth
+identifier](../ground_truth/) takes over and searches for public data and
+baselines to anchor the eval on.
+
 ## Setup
 
 ```bash
@@ -92,5 +96,5 @@ classified, not obeyed.
 pytest
 ```
 
-48 tests, all offline — the classifier and web tests drive fakes, the gap and
+80 tests, all offline — the classifier and web tests drive fakes, the gap and
 render layers are pure functions. No test spends money.

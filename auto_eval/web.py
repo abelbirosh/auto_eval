@@ -14,7 +14,9 @@ from pydantic import BaseModel, Field
 
 from .classifier import DEFAULT_MAX_TOKENS, ClassifierError, classify
 from .config import Settings, get_settings
-from .render import render_markdown
+from .gaps import analyze
+from .ground_truth import GroundTruthReport, gate, identify
+from .render import render_ground_truth, render_markdown
 from .schema import TaskSpec
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -29,6 +31,16 @@ class ClassifyResponse(BaseModel):
     spec: TaskSpec
     markdown: str
     model: str
+
+
+class GroundTruthRequest(BaseModel):
+    spec: TaskSpec = Field(description="A spec returned by /api/classify.")
+    model: Optional[str] = None
+
+
+class GroundTruthResponse(BaseModel):
+    report: GroundTruthReport
+    markdown: str
 
 
 def create_app():
@@ -68,6 +80,22 @@ def create_app():
             model=request.model or get_settings().model,
         )
 
+    @app.post("/api/ground-truth", response_model=GroundTruthResponse)
+    def ground_truth_endpoint(request: GroundTruthRequest):
+        # The spec comes back over the wire, so its questions are recomputed
+        # here rather than trusted; the gate then reads the same as the CLI's.
+        spec = analyze(request.spec)
+        decision = gate(spec)
+        if not decision.open:
+            raise HTTPException(status_code=409, detail=f"Not ready to search: {decision.reason}")
+
+        try:
+            report = identify(spec, model=request.model, max_tokens=DEFAULT_MAX_TOKENS)
+        except ClassifierError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return GroundTruthResponse(report=report, markdown=render_ground_truth(report))
+
     return app
 
 
@@ -90,4 +118,11 @@ def serve(host: str = "127.0.0.1", port: int = 8000, reload: bool = False) -> No
         uvicorn.run(create_app(), host=host, port=port)
 
 
-__all__ = ["ClassifyRequest", "ClassifyResponse", "create_app", "serve"]
+__all__ = [
+    "ClassifyRequest",
+    "ClassifyResponse",
+    "GroundTruthRequest",
+    "GroundTruthResponse",
+    "create_app",
+    "serve",
+]

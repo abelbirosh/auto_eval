@@ -1,15 +1,30 @@
-"""Render a TaskSpec as a human-readable task document."""
+"""Render a TaskSpec, and a ground-truth report, as human-readable documents."""
 
 from __future__ import annotations
 
 from typing import List, Optional
 
+from .ground_truth import Availability, Coverage, GroundTruthReport
 from .schema import EvidenceStatus, Readiness, TaskSpec
 
 READINESS_BLURB = {
     Readiness.READY: "enough detail to start building the eval",
     Readiness.NEEDS_INPUT: "usable, but answers below will sharpen it",
     Readiness.INSUFFICIENT: "blocked - the questions marked **blocking** must be answered first",
+}
+
+VERDICT_BLURB = {
+    Availability.LABELLED_DATA: "public data with labels exists - the eval can score against it",
+    Availability.PUBLISHED_BASELINES: "published numbers to compare against, but no labels - we still label our own cases",
+    Availability.REFERENCE_ONLY: "context only - nothing found that can score or benchmark this",
+    Availability.NONE_FOUND: "nothing usable found online - the ground truth has to be built",
+}
+
+COVERAGE_MARK = {
+    Coverage.LABELLED: "labelled data",
+    Coverage.BASELINE: "baseline only",
+    Coverage.REFERENCE: "reference only",
+    Coverage.NONE: "nothing found",
 }
 
 STATUS_MARK = {
@@ -138,4 +153,75 @@ def render_markdown(spec: TaskSpec) -> str:
     return "\n".join(lines)
 
 
-__all__ = ["render_markdown", "render_questions"]
+def render_ground_truth(report: GroundTruthReport) -> str:
+    """The ground-truth report as a document, in the same voice as the task spec."""
+    lines: List[str] = [
+        f"# Ground truth for {report.subject}",
+        "",
+        f"**Verdict:** `{report.verdict.value}` - {VERDICT_BLURB[report.verdict]}  ",
+        f"**Sources found:** {len(report.sources)}  ",
+        "**We already hold our own ground truth**, so public sources are for comparison, not scoring.  "
+        if report.internal_ground_truth
+        else "**No ground truth of our own**, so anything usable below saves labelling work.  ",
+        "",
+        report.recommendation or "_No recommendation returned._",
+        "",
+        "## Coverage by KPI",
+        "",
+    ]
+
+    if not report.kpi_coverage:
+        lines += ["_No KPIs to cover._", ""]
+    else:
+        lines += ["| KPI | What exists | Sources |", "| --- | --- | --- |"]
+        for item in report.kpi_coverage:
+            lines.append(
+                f"| {item.kpi} | {COVERAGE_MARK[item.coverage]} | "
+                f"{', '.join(item.sources) if item.sources else '—'} |"
+            )
+        lines.append("")
+
+    lines += ["## Sources", ""]
+    if not report.sources:
+        lines += ["_Nothing found online for this task._", ""]
+    else:
+        for source in report.sources:
+            lines += [
+                f"### {source.name}",
+                "",
+                f"`{source.kind.value}` · fit {source.fit.value} · access {source.access.value}"
+                + (f" · {source.licence}" if source.licence else "")
+                + (f" · {source.publisher}" if source.publisher else ""),
+                "",
+                source.description,
+                "",
+                f"<{source.url}>",
+                "",
+            ]
+            if source.covers_kpis:
+                lines += [f"Covers: {', '.join(source.covers_kpis)}", ""]
+            if source.baselines:
+                lines += ["| Metric | Value | System | As of |", "| --- | --- | --- | --- |"]
+                for value in source.baselines:
+                    lines.append(
+                        f"| {value.metric} | {value.value} | {value.system or '—'} | "
+                        f"{value.as_of or '—'} |"
+                    )
+                lines.append("")
+            if source.caveats:
+                lines += [f"Caveat: {source.caveats}", ""]
+
+    lines += [
+        "## Notes",
+        "",
+        *_bullets(report.notes, "none"),
+        "",
+        "## Searches run",
+        "",
+        *_bullets(report.searches, "none recorded"),
+        "",
+    ]
+    return "\n".join(lines)
+
+
+__all__ = ["render_ground_truth", "render_markdown", "render_questions"]

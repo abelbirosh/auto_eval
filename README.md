@@ -8,5 +8,6 @@ you want tested.
 | | Component | Status |
 | --- | --- | --- |
 | 1 | [Classifier](classifier/) — free-form request → structured task spec | built |
+| 2 | [Ground truth identifier](ground_truth/) — is there a public baseline or labelled data for it? | built |
 
-Six more to come.
+Five more to come.

@@ -75,9 +75,10 @@
   .badge {
     font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
   }
-  .badge.ready { color: var(--ready); }
-  .badge.needs_input { color: var(--needs); }
+  .badge.ready, .badge.labelled_data { color: var(--ready); }
+  .badge.needs_input, .badge.published_baselines { color: var(--needs); }
   .badge.insufficient { color: var(--blocked); }
+  .badge.reference_only, .badge.none_found { color: var(--muted); }
   .verdict strong { font-size: 17px; font-weight: 600; }
 
   h2 {
@@ -102,6 +103,11 @@
   .q { padding-left: 15px; margin: 16px 0; border-left: 1px solid var(--rule-2); }
   .q.blocking { border-left-color: var(--blocked); }
   .q .why { color: var(--muted); font-size: 13px; margin-top: 3px; }
+  .src { margin: 22px 0; }
+  .src .head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .src h3 { margin: 0; }
+  .src a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--rule-2); }
+  .src a:hover { border-bottom-color: var(--accent); }
   .tag {
     font-size: 10px; font-weight: 700; color: var(--blocked);
     text-transform: uppercase; letter-spacing: .12em; margin-left: 4px;
@@ -140,6 +146,7 @@
   </div>
 
   <section class="result" id="result" hidden></section>
+  <section class="result" id="gtresult" hidden></section>
 </div>
 
 <script>
@@ -167,6 +174,15 @@ function list(items, empty) {
   if (!items || !items.length) return `<p class="none">${esc(empty)}</p>`;
   return `<ul>${items.map(i => `<li>${esc(i)}</li>`).join("")}</ul>`;
 }
+
+let lastSpec = null;
+
+const COVERAGE = {
+  labelled: "labelled data",
+  baseline: "baseline only",
+  reference: "reference only",
+  none: "nothing found",
+};
 
 function render(data) {
   const s = data.spec, sub = s.subject, c = s.confidence;
@@ -237,8 +253,96 @@ function render(data) {
     <p class="mono">subject ${c.subject.toFixed(2)} &middot; kpis ${c.kpis.toFixed(2)} &middot; evidence ${c.evidence.toFixed(2)} &middot; overall ${c.overall.toFixed(2)}</p>
 
     <details><summary>Task document (markdown)</summary><pre>${esc(data.markdown)}</pre></details>
-    <details><summary>Raw JSON</summary><pre>${esc(JSON.stringify(s, null, 2))}</pre></details>`;
+    <details><summary>Raw JSON</summary><pre>${esc(JSON.stringify(s, null, 2))}</pre></details>
+
+    <h2>Ground truth</h2>
+    ${blocking
+      ? `<p class="none">Waiting on the ${blocking} blocking question(s) above &mdash; searching for
+         baselines before the KPIs are settled just returns plausible noise.</p>`
+      : `<p>Nothing is blocking. Search the web for datasets, benchmarks, and published
+         numbers this eval could be anchored on.</p>
+         <div class="row"><button class="primary" id="gt">Find ground truth</button></div>`}`;
+
+  lastSpec = s;
+  $("gtresult").hidden = true;
+  const gtBtn = $("gt");
+  if (gtBtn) gtBtn.onclick = groundTruth;
   $("result").hidden = false;
+}
+
+function renderReport(data) {
+  const r = data.report;
+
+  const coverage = r.kpi_coverage.length ? `<div class="scroll"><table>
+      <tr><th>KPI</th><th>What exists</th><th>Sources</th></tr>
+      ${r.kpi_coverage.map(k => `<tr><td>${esc(k.kpi)}</td>
+        <td>${esc(COVERAGE[k.coverage] || k.coverage)}</td>
+        <td>${k.sources.length ? esc(k.sources.join(", ")) : "&mdash;"}</td></tr>`).join("")}
+    </table></div>`
+    : `<p class="none">No KPIs to cover.</p>`;
+
+  const sources = r.sources.length ? r.sources.map(src => `<div class="src">
+      <div class="head"><h3>${esc(src.name)}</h3>
+        <code>${esc(src.kind)}</code>
+        <span class="meta">fit ${esc(src.fit)} &middot; access ${esc(src.access)}${
+          src.licence ? " &middot; " + esc(src.licence) : ""}</span></div>
+      <p>${esc(src.description)}</p>
+      <p><a href="${esc(src.url)}" target="_blank" rel="noopener noreferrer">${esc(src.url)}</a></p>
+      ${src.covers_kpis.length ? `<p class="why">Covers: ${esc(src.covers_kpis.join(", "))}</p>` : ""}
+      ${src.baselines.length ? `<div class="scroll"><table>
+        <tr><th>Metric</th><th>Value</th><th>System</th><th>As of</th></tr>
+        ${src.baselines.map(b => `<tr><td>${esc(b.metric)}</td><td>${esc(b.value)}</td>
+          <td>${b.system ? esc(b.system) : "&mdash;"}</td>
+          <td>${b.as_of ? esc(b.as_of) : "&mdash;"}</td></tr>`).join("")}
+       </table></div>` : ""}
+      ${src.caveats ? `<p class="why">Caveat: ${esc(src.caveats)}</p>` : ""}
+    </div>`).join("")
+    : `<p class="none">Nothing usable found online for this task.</p>`;
+
+  $("gtresult").innerHTML = `
+    <div class="verdict">
+      <span class="badge ${esc(r.verdict)}">${esc(r.verdict.replace(/_/g, " "))}</span>
+      <strong>Ground truth for ${esc(r.subject)}</strong>
+      <span class="meta">${r.sources.length} source(s)</span>
+    </div>
+    <p>${esc(r.recommendation)}</p>
+    <p class="why">${r.internal_ground_truth
+      ? "You already hold your own labels, so these are for comparison rather than scoring."
+      : "You hold no labels of your own, so anything usable below saves labelling work."}</p>
+
+    <h2>Coverage by KPI</h2>${coverage}
+    <h2>Sources</h2>${sources}
+    <h2>Notes</h2>${list(r.notes, "none")}
+    <h2>Searches run</h2>${list(r.searches, "none recorded")}
+
+    <details><summary>Report (markdown)</summary><pre>${esc(data.markdown)}</pre></details>
+    <details><summary>Raw JSON</summary><pre>${esc(JSON.stringify(r, null, 2))}</pre></details>`;
+  $("gtresult").hidden = false;
+}
+
+async function groundTruth() {
+  if (!lastSpec) return;
+  const btn = $("gt");
+  btn.disabled = true;
+  btn.textContent = "Searching\u2026";
+  banner("", "");
+
+  try {
+    const r = await fetch("/api/ground-truth", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ spec: lastSpec }),
+    });
+    const body = await r.json();
+    if (!r.ok) { banner("err", body.detail || `Request failed (${r.status})`); return; }
+    renderReport(body);
+    $("gtresult").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (e) {
+    banner("err", `Could not reach the server: ${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Find ground truth";
+  }
 }
 
 async function run() {
@@ -270,7 +374,13 @@ async function run() {
 
 $("go").onclick = run;
 $("example").onclick = () => { $("input").value = EXAMPLE; $("input").focus(); };
-$("clear").onclick = () => { $("input").value = ""; $("result").hidden = true; banner("", ""); };
+$("clear").onclick = () => {
+  $("input").value = "";
+  $("result").hidden = true;
+  $("gtresult").hidden = true;
+  lastSpec = null;
+  banner("", "");
+};
 $("input").addEventListener("keydown", e => {
   if ((e.metaKey || e.ctrlKey) && e.key === "Enter") run();
 });
