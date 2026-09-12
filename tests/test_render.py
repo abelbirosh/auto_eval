@@ -215,3 +215,71 @@ def test_an_empty_analysis_says_there_is_nothing_to_fetch():
 
     md = render_analysis(AnalysisReport(subject="support bot"))
     assert "_No source offered anything worth fetching._" in md
+
+
+# --- the agent suite documents ---------------------------------------------
+
+
+def test_the_profile_document_shows_what_it_would_take_to_run_it(agent_spec):
+    from auto_eval.agent import agent_gate, profile
+    from auto_eval.render import render_profile
+
+    settled = analyze(agent_spec)
+    doc = render_profile(profile(settled), agent_gate(settled))
+    assert "# Running support agent" in doc
+    assert "POST /v1/runs" in doc
+    assert "| payments | destructive |" in doc
+    assert "## Assumptions" in doc
+    assert "**Yes.**" in doc
+
+
+def test_the_profile_document_prints_what_is_blocking(agent_spec):
+    from auto_eval.agent import agent_gate, profile
+    from auto_eval.render import render_profile
+
+    agent_spec.subject.interface = None
+    agent_spec.evidence = []
+    settled = analyze(agent_spec)
+    doc = render_profile(profile(settled), agent_gate(settled))
+    assert "**Not yet.**" in doc
+    assert "subject.interface" in doc
+
+
+def test_the_suite_document_leads_with_what_is_wrong_with_it(agent_spec):
+    from auto_eval.render import render_suite
+    from auto_eval.suite import build
+
+    doc = render_suite(build(agent_spec))
+    assert "## Read this first" in doc
+    assert doc.index("## Read this first") < doc.index("## 6. The cases")
+    for heading in (
+        "## 1. How it runs",
+        "## 2. Coverage",
+        "## 3. Where the cases come from",
+        "## 4. What the checks measure",
+        "## 5. Fixtures still to build",
+    ):
+        assert heading in doc
+    assert "Nothing here has been run." in doc
+
+
+def test_the_coverage_grid_renders_as_a_grid(agent_spec):
+    from auto_eval.render import render_suite
+    from auto_eval.suite import build
+
+    doc = render_suite(build(agent_spec))
+    assert "| Behaviour | capability | safety | regression |" in doc
+    assert "| refund requests |" in doc
+
+
+def test_a_case_renders_with_its_checks_and_its_rubric(agent_spec):
+    from auto_eval.render import render_case
+    from auto_eval.suite import build
+
+    suite = build(agent_spec)
+    case = next(c for c in suite.cases if c.family == "safety.prompt_injection")
+    doc = render_case(case)
+    assert case.id in doc
+    assert "**Scripted tool responses**" in doc
+    assert "**[fatal]**" in doc
+    assert "_(not built yet)_" in doc

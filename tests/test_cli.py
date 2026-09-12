@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from auto_eval.cli import EXIT_OK, build_parser, main
 
 
@@ -228,3 +230,162 @@ def test_benchmarks_never_calls_the_model_for_a_spec_on_disk(
     spec_file.write_text(analyze(full_spec).model_dump_json())
 
     assert main(["benchmarks", "-s", str(spec_file)]) == 0
+
+
+# --- the agent suite commands ----------------------------------------------
+
+
+def write_spec(tmp_path, spec):
+    from auto_eval.gaps import analyze
+
+    path = tmp_path / "spec.json"
+    path.write_text(analyze(spec).model_dump_json())
+    return str(path)
+
+
+def test_profile_reports_the_agent_and_exits_zero(tmp_path, agent_spec, capsys):
+    assert main(["profile", "-s", write_spec(tmp_path, agent_spec)]) == EXIT_OK
+    out = capsys.readouterr().out
+    assert "# Running support agent" in out
+    assert "POST /v1/runs" in out
+
+
+def test_profile_exits_two_when_the_agent_cannot_be_run(tmp_path, agent_spec, capsys):
+    from auto_eval.cli import EXIT_INSUFFICIENT
+
+    agent_spec.subject.interface = None
+    agent_spec.evidence = []
+    assert (
+        main(["profile", "-s", write_spec(tmp_path, agent_spec)]) == EXIT_INSUFFICIENT
+    )
+    assert "Not yet." in capsys.readouterr().out
+
+
+def test_profile_json_is_machine_readable(tmp_path, agent_spec, capsys):
+    assert (
+        main(["profile", "-s", write_spec(tmp_path, agent_spec), "--format", "json"])
+        == EXIT_OK
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["profile"]["run_mode"] == "http"
+    assert payload["gate"]["open"] is True
+
+
+def test_author_writes_the_suite_and_the_document(tmp_path, agent_spec, capsys):
+    out_dir = tmp_path / "suite"
+    spec = write_spec(tmp_path, agent_spec)
+    assert main(["author", "-s", spec, "-o", str(out_dir)]) == EXIT_OK
+
+    written = json.loads((out_dir / "suite.json").read_text())
+    assert written["cases"]
+    assert (
+        (out_dir / "suite.md").read_text().startswith("# Eval suite for support agent")
+    )
+    assert "Wrote" in capsys.readouterr().err
+
+
+def test_author_exits_two_without_writing_when_it_cannot_be_run(
+    tmp_path, agent_spec, capsys
+):
+    from auto_eval.cli import EXIT_INSUFFICIENT
+
+    agent_spec.subject.interface = None
+    agent_spec.evidence = []
+    out_dir = tmp_path / "suite"
+    assert (
+        main(["author", "-s", write_spec(tmp_path, agent_spec), "-o", str(out_dir)])
+        == EXIT_INSUFFICIENT
+    )
+    assert not out_dir.exists()
+    assert "Not ready to author" in capsys.readouterr().err
+
+
+def test_author_force_writes_past_the_gate(tmp_path, agent_spec):
+    agent_spec.subject.interface = None
+    agent_spec.evidence = []
+    out_dir = tmp_path / "suite"
+    assert (
+        main(
+            [
+                "author",
+                "-s",
+                write_spec(tmp_path, agent_spec),
+                "-o",
+                str(out_dir),
+                "--force",
+            ]
+        )
+        == EXIT_OK
+    )
+    assert (out_dir / "suite.json").exists()
+
+
+def test_author_never_calls_the_model_for_a_spec_on_disk(
+    tmp_path, agent_spec, monkeypatch
+):
+    """The whole block is deterministic; a model call here would be a bug."""
+    from auto_eval import cli
+
+    monkeypatch.setattr(
+        cli, "classify", lambda *a, **kw: pytest.fail("classify should not be called")
+    )
+    assert (
+        main(
+            [
+                "author",
+                "-s",
+                write_spec(tmp_path, agent_spec),
+                "-o",
+                str(tmp_path / "s"),
+            ]
+        )
+        == EXIT_OK
+    )
+
+
+def test_author_is_byte_identical_across_runs(tmp_path, agent_spec):
+    spec = write_spec(tmp_path, agent_spec)
+    main(["author", "-s", spec, "-o", str(tmp_path / "a")])
+    main(["author", "-s", spec, "-o", str(tmp_path / "b")])
+    assert (tmp_path / "a" / "suite.json").read_text() == (
+        tmp_path / "b" / "suite.json"
+    ).read_text()
+
+
+def test_suite_reads_back_what_author_wrote(tmp_path, agent_spec, capsys):
+    out_dir = tmp_path / "suite"
+    main(["author", "-s", write_spec(tmp_path, agent_spec), "-o", str(out_dir)])
+    capsys.readouterr()
+
+    assert main(["suite", str(out_dir)]) == EXIT_OK
+    assert "# Eval suite for support agent" in capsys.readouterr().out
+
+
+def test_suite_prints_one_case_in_full_from_an_id_prefix(tmp_path, agent_spec, capsys):
+    out_dir = tmp_path / "suite"
+    main(["author", "-s", write_spec(tmp_path, agent_spec), "-o", str(out_dir)])
+    capsys.readouterr()
+
+    case_id = json.loads((out_dir / "suite.json").read_text())["cases"][0]["id"]
+    assert main(["suite", str(out_dir), "--case", case_id[:6]]) == EXIT_OK
+    out = capsys.readouterr().out
+    assert case_id in out
+    assert "**Checks**" in out
+
+
+def test_suite_says_so_when_the_id_matches_nothing(tmp_path, agent_spec, capsys):
+    from auto_eval.cli import EXIT_ERROR
+
+    out_dir = tmp_path / "suite"
+    main(["author", "-s", write_spec(tmp_path, agent_spec), "-o", str(out_dir)])
+    capsys.readouterr()
+
+    assert main(["suite", str(out_dir), "--case", "zzzzzz"]) == EXIT_ERROR
+    assert "no case" in capsys.readouterr().err
+
+
+def test_suite_on_an_empty_directory_exits_two_with_advice(tmp_path, capsys):
+    from auto_eval.cli import EXIT_INSUFFICIENT
+
+    assert main(["suite", str(tmp_path)]) == EXIT_INSUFFICIENT
+    assert "auto-eval author" in capsys.readouterr().err

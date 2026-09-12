@@ -4,9 +4,14 @@ from __future__ import annotations
 
 from typing import List, Optional
 
+from .agent import AgentProfile, RunMode
 from .analysis import AnalysisReport, Reachability, Usability
-from .ground_truth import Availability, Coverage, GroundTruthReport
+from .authoring import Case, CaseSource, needs_fixture
+from .ground_truth import Availability, Coverage, Gate, GroundTruthReport
 from .schema import EvidenceStatus, Readiness, TaskSpec
+from .suite import Split, Suite, kpi_coverage
+from .surface import CellStatus, CoverageMatrix
+from .verify import automatic_share
 
 READINESS_BLURB = {
     Readiness.READY: "enough detail to start building the eval",
@@ -356,9 +361,256 @@ def render_analysis(analysis: AnalysisReport) -> str:
     return "\n".join(lines)
 
 
+RUN_MODE_BLURB = {
+    RunMode.SUBPROCESS: "started as a process; the exit code and the files it leaves are the result",
+    RunMode.HTTP: "started over HTTP and polled until it reaches a terminal state",
+    RunMode.PYTHON: "called as a function in-process",
+    RunMode.TRANSCRIPT: "not started at all - runs that already happened are scored instead",
+    RunMode.UNKNOWN: "unknown - nothing in the spec says how to start one",
+}
+
+CELL_MARK = {
+    CellStatus.COVERED: "",
+    CellStatus.THIN: " (thin)",
+    CellStatus.EMPTY: " (empty)",
+}
+
+SOURCE_BLURB = {
+    CaseSource.HARVESTED: "from runs and incidents you already have - the strongest cases here",
+    CaseSource.ADAPTED: "from a public suite; real tasks, but possibly in the agent's training data",
+    CaseSource.SYNTHESISED: "generated from the spec; cheap, and partly a measurement of the generator",
+}
+
+
+def render_profile(agent_profile: AgentProfile, decision: Optional[Gate] = None) -> str:
+    """What we think we can drive, and whether that is enough to author against."""
+    budget = agent_profile.budget
+    lines: List[str] = [
+        f"# Running {agent_profile.subject}",
+        "",
+        f"**Run mode:** `{agent_profile.run_mode.value}` - {RUN_MODE_BLURB[agent_profile.run_mode]}  ",
+        f"**Isolation:** `{agent_profile.isolation.value}`  ",
+        f"**Samples per case:** {agent_profile.samples}"
+        + (
+            " (stochastic, so one run is a number with no error bar)"
+            if agent_profile.stochastic
+            else " (deterministic)"
+        ),
+        "",
+        "| | |",
+        "| --- | --- |",
+        f"| Entry point | {_or_unknown(agent_profile.entrypoint)} |",
+        f"| A run is over when | {agent_profile.episode_end} |",
+        f"| Step ceiling | {budget.max_steps if budget.max_steps is not None else '—'} |",
+        f"| Time ceiling | {f'{budget.max_seconds}s' if budget.max_seconds is not None else '—'} |",
+        f"| Token ceiling | {budget.max_tokens if budget.max_tokens is not None else '—'} |",
+        f"| Spend ceiling | {f'${budget.max_usd:.2f}' if budget.max_usd is not None else '—'} |",
+        "",
+        "## Tools",
+        "",
+    ]
+
+    if not agent_profile.tools:
+        lines += [
+            "_None read off the request. Every trajectory check below is therefore a guess._",
+            "",
+        ]
+    else:
+        lines += [
+            "| Tool | Effect | Can be stubbed | Read off |",
+            "| --- | --- | --- | --- |",
+        ]
+        for tool in agent_profile.tools:
+            lines.append(
+                f"| {tool.name} | {tool.effect.value} | {'yes' if tool.stubbable else 'no'} | "
+                f"{f'“{tool.evidence}”' if tool.evidence else '—'} |"
+            )
+        lines.append("")
+
+    lines += ["## Assumptions", "", *_bullets(agent_profile.assumptions, "none"), ""]
+
+    if decision is not None:
+        lines += [
+            "## Can a suite be authored",
+            "",
+            ("**Yes.** " if decision.open else "**Not yet.** ") + decision.reason,
+            "",
+        ]
+        if decision.blocking:
+            for i, question in enumerate(decision.blocking, 1):
+                lines += [
+                    f"{i}. {question.question}",
+                    f"   - _{question.why}_ (`{question.field}`)",
+                ]
+            lines.append("")
+    return "\n".join(lines)
+
+
+def _grid(matrix: CoverageMatrix) -> List[str]:
+    header = "| Behaviour | " + " | ".join(t.value for t in matrix.eval_types) + " |"
+    rule = "| --- |" + " --- |" * len(matrix.eval_types)
+    rows = [header, rule]
+    for behaviour in matrix.behaviours:
+        cells = []
+        for eval_type in matrix.eval_types:
+            cell = matrix.cell(behaviour, eval_type)
+            if cell is None:
+                cells.append("—")
+                continue
+            cells.append(f"{len(cell.case_ids)}/{cell.target}{CELL_MARK[cell.status]}")
+        rows.append(f"| {behaviour} | " + " | ".join(cells) + " |")
+    return rows
+
+
+def render_suite(suite: Suite) -> str:
+    """The suite as a document: what it covers, what it cannot, and what it costs."""
+    held = suite.cases_in(Split.HELD_OUT)
+    dev = suite.cases_in(Split.DEV)
+    checks = suite.verifiers
+    pending = needs_fixture(suite.cases)
+
+    lines: List[str] = [
+        f"# Eval suite for {suite.subject}",
+        "",
+        f"**Cases:** {len(suite.cases)} ({len(held)} held out, {len(dev)} dev)  ",
+        f"**Runs per pass:** {len(suite.cases)} x {suite.samples} = {suite.total_runs}  ",
+        f"**Checks:** {len(checks)}, {automatic_share(checks):.0%} of them settled by machine  ",
+        f"**Digest:** `{suite.digest}` (spec `{suite.spec_digest}`)",
+        "",
+        "Nothing here has been run. The fixtures are specified, not built: this document "
+        "says what the suite is, and what has to exist before it can be executed.",
+        "",
+    ]
+
+    if suite.warnings:
+        lines += ["## Read this first", ""]
+        lines += [f"- {warning}" for warning in suite.warnings]
+        lines.append("")
+
+    lines += [
+        "## 1. How it runs",
+        "",
+        f"`{suite.profile.run_mode.value}` - {RUN_MODE_BLURB[suite.profile.run_mode]}",
+        "",
+        f"- **Entry point:** {_or_unknown(suite.profile.entrypoint)}",
+        f"- **A run is over when:** {suite.profile.episode_end}",
+        f"- **Isolation:** {suite.profile.isolation.value}",
+        f"- **Ceilings:** {suite.profile.budget.max_steps} steps, {suite.profile.budget.max_seconds}s",
+        "",
+        "## 2. Coverage",
+        "",
+        *_grid(suite.coverage),
+        "",
+    ]
+    if suite.coverage.riders:
+        lines += [
+            "Measured on every case rather than in a cell of its own:",
+            "",
+            *_bullets(suite.coverage.riders, "none"),
+            "",
+        ]
+    lines += [*_bullets(suite.coverage.notes, "no notes"), ""]
+
+    lines += [
+        "## 3. Where the cases come from",
+        "",
+        "| Source | Cases | What that means |",
+        "| --- | --- | --- |",
+    ]
+    for source in CaseSource:
+        found = suite.by_source(source)
+        if found:
+            lines.append(f"| {source.value} | {len(found)} | {SOURCE_BLURB[source]} |")
+    lines.append("")
+
+    lines += ["## 4. What the checks measure", "", "| KPI | Checks |", "| --- | --- |"]
+    for name, ids in kpi_coverage(suite).items():
+        lines.append(
+            f"| {name} | {len(ids) if ids else 'none - this suite does not measure it'} |"
+        )
+    lines.append("")
+
+    kinds: dict = {}
+    for check in checks:
+        kinds[check.kind.value] = kinds.get(check.kind.value, 0) + 1
+    lines += [
+        "By kind: "
+        + ", ".join(f"{kind} ({count})" for kind, count in sorted(kinds.items()))
+        + ".",
+        "",
+    ]
+
+    lines += ["## 5. Fixtures still to build", ""]
+    if not pending:
+        lines += ["_None - every case has its starting state._", ""]
+    else:
+        lines += ["| Case | What has to exist |", "| --- | --- |"]
+        seen: set = set()
+        for case in pending:
+            key = case.fixture.reference
+            if key in seen:
+                continue
+            seen.add(key)
+            lines.append(f"| `{case.id}` | {_preview(case.fixture.reference)} |")
+        lines += [
+            "",
+            f"_{len(pending)} case(s) across {len(seen)} distinct starting states._",
+            "",
+        ]
+
+    lines += [
+        "## 6. The cases",
+        "",
+        "| Case | Split | Family | Asks for | Checks |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for case in suite.cases:
+        lines.append(
+            f"| `{case.id}` | {suite.split_of(case.id).value} | {case.family} | "
+            f"{_preview(case.instruction)} | {len(case.verifiers)} |"
+        )
+    lines += ["", "## Notes", "", *_bullets(suite.notes, "none"), ""]
+    return "\n".join(lines)
+
+
+def render_case(case: Case) -> str:
+    """One case in full - what a person reads when they want to argue with it."""
+    lines = [
+        f"### `{case.id}` - {case.family}",
+        "",
+        f"`{case.source.value}` · {', '.join(t.value for t in case.eval_types)} · covers _{case.behaviour}_",
+        "",
+        case.instruction,
+        "",
+        f"**Starting state:** {case.fixture.reference}"
+        + ("" if case.fixture.materialised else " _(not built yet)_"),
+        "",
+    ]
+    if case.stubs:
+        lines += ["**Scripted tool responses**", ""]
+        for stub in case.stubs:
+            lines.append(
+                f"- `{stub.tool}` returns {stub.behaviour.value}: {stub.payload}"
+            )
+        lines.append("")
+    lines += ["**Checks**", ""]
+    for verifier in case.verifiers:
+        mark = " **[fatal]**" if verifier.fatal else ""
+        lines.append(f"- `{verifier.kind.value}`{mark} — {verifier.description}")
+        for line in verifier.rubric:
+            lines.append(f"  - _{line}_")
+    lines.append("")
+    if case.notes:
+        lines += [*_bullets(case.notes, "none"), ""]
+    return "\n".join(lines)
+
+
 __all__ = [
     "render_analysis",
+    "render_case",
     "render_ground_truth",
     "render_markdown",
+    "render_profile",
     "render_questions",
+    "render_suite",
 ]
