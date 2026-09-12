@@ -1,0 +1,16 @@
+version: 2
+updates:
+  # Actions pinned to a major tag still go stale; this keeps the bumps visible.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: ci
+
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: deps

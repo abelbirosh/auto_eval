@@ -1,0 +1,22 @@
+# Optional, but it turns a red CI run into a caught mistake:
+#   pip install pre-commit && pre-commit install
+# The ruff hooks here run the same checks as the CI lint job.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.7
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      # Not cosmetic: catches a key pasted into a file instead of into .env.
+      - id: detect-private-key
