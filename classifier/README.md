@@ -37,8 +37,11 @@ auto-eval serve
 ```
 
 The UI at <http://127.0.0.1:8000> is the quickest way to try it — paste a
-request, hit Classify. Localhost, no auth; it's a test harness, not a
-deployment target.
+request, hit Classify. The result is a short verdict, with the spec itself one
+click down under "Full spec". Each blocking question gets its own box; fill them
+all and Submit answers re-classifies the original request with the answers
+appended, which is what clears the block. Localhost, no auth; it's a test
+harness, not a deployment target.
 
 From the command line:
 
@@ -68,8 +71,23 @@ fields — an empty `kpis` means "found nothing".
 **The model extracts; it doesn't judge completeness.** `gaps.py` recomputes the
 open questions and the readiness verdict from rules after every run and discards
 the model's own guess, so that decision is deterministic and testable offline.
-Only one rule blocks — no KPIs, which leaves nothing to score. Everything else
-comes back as a normal question and reads `needs_input`.
+That includes the model's view of what blocks: a question it raised always comes
+back non-blocking, because left to itself it calls "send me your transcripts" a
+showstopper and the pipeline never moves.
+
+**Blocking is a last resort; the rest is derived.** `derive.py` runs first and
+fills in what the request implies — a KPI when none was named, a grading method
+from the metric's kind, which KPI is primary, what sort of evaluation this is.
+Each value is marked `inferred` and recorded in `assumptions`, and `gaps.py`
+still asks about it as a normal question, so it is a starting point to correct
+rather than a claim about what you said. What's left that can block is a request
+that never says what is under test — there is nothing to point an eval at, and
+no default will do. Everything else reads `needs_input` and proceeds.
+
+The derived KPI follows what you told us: an eval type you named wins (`safety` →
+violation rate, `performance` → p95 latency, `cost` → cost per run), then the
+kind of subject (`classifier` → accuracy, `rag_pipeline` → answer faithfulness),
+falling back to task success rate.
 
 Two rules fire on every spec that lacks them: ask for documentation, and ask for
 examples of runs that came out the way the user wanted. Those are what separate
@@ -85,6 +103,7 @@ classified, not obeyed.
 | [schema.py](../auto_eval/schema.py) | `TaskSpec` — the contract everything downstream reads. |
 | [prompts.py](../auto_eval/prompts.py) | The extraction system prompt. |
 | [classifier.py](../auto_eval/classifier.py) | The API call, error mapping, input limits. |
+| [derive.py](../auto_eval/derive.py) | Fills the holes the spec implies, before any question is asked. |
 | [gaps.py](../auto_eval/gaps.py) | Rule-based gap analysis and the readiness verdict. |
 | [render.py](../auto_eval/render.py) | `TaskSpec` → task document. |
 | [config.py](../auto_eval/config.py) | `.env` loading and provider settings. |

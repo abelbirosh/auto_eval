@@ -103,6 +103,17 @@
   .q { padding-left: 15px; margin: 16px 0; border-left: 1px solid var(--rule-2); }
   .q.blocking { border-left-color: var(--blocked); }
   .q .why { color: var(--muted); font-size: 13px; margin-top: 3px; }
+  .q textarea {
+    min-height: 0; margin-top: 8px; padding: 4px 0 8px; font-size: 14px;
+  }
+  .q textarea.filled { border-bottom-color: var(--ready); }
+  /* Disabled here means "not filled in yet", not "working". */
+  #answer:disabled { cursor: not-allowed; }
+
+  /* The summary block: a handful of lines, everything else folded away. */
+  table.facts th { width: 96px; }
+  table.facts td, table.facts th { border-bottom: 0; padding: 3px 14px 3px 0; }
+  .sep { color: var(--rule-2); }
   .src { margin: 22px 0; }
   .src .head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
   .src h3 { margin: 0; }
@@ -121,6 +132,8 @@
     font-size: 12.5px; line-height: 1.55; margin: 10px 0 0;
   }
   details { margin-top: 18px; border-top: 1px solid var(--rule); padding-top: 14px; }
+  details.inline { margin: 0; border-top: 0; padding-top: 0; }
+  details.inline ul { margin-top: 6px; }
   summary { cursor: pointer; color: var(--muted); font-size: 12.5px; letter-spacing: .01em; }
   summary:hover { color: var(--ink); }
 </style>
@@ -178,6 +191,31 @@ function list(items, empty) {
 
 let lastSpec = null;
 let lastReport = null;
+let lastText = "";
+// Questions from the spec on screen, and every answer typed so far. Answers
+// accumulate across rounds: a question that stops being asked keeps the reply
+// that settled it, so the next classification still sees it.
+let questions = [];
+let answered = [];
+
+const filled = (i) => !!($("ans" + i) && $("ans" + i).value.trim());
+const answeredFor = (q) => {
+  const hit = answered.find(a => a.question === q.question);
+  return hit ? hit.answer : "";
+};
+
+function collectAnswers() {
+  const merged = answered.slice();
+  questions.forEach((q, i) => {
+    const box = $("ans" + i);
+    const answer = box ? box.value.trim() : "";
+    if (!answer) return;
+    const at = merged.findIndex(a => a.question === q.question);
+    const entry = { field: q.field, question: q.question, answer };
+    if (at === -1) merged.push(entry); else merged[at] = entry;
+  });
+  return merged;
+}
 
 const REACH = {
   ok: "reachable",
@@ -206,84 +244,135 @@ const COVERAGE = {
   none: "nothing found",
 };
 
+function questionBox(q, i) {
+  const answer = answeredFor(q);
+  return `<div class="q ${q.blocking ? "blocking" : ""}">
+      <div>${esc(q.question)} ${q.blocking ? '<span class="tag">blocking</span>' : ""}</div>
+      <div class="why">${esc(q.why)} &middot; <code>${esc(q.field)}</code></div>
+      <textarea id="ans${i}" data-i="${i}" rows="2" placeholder="${
+        q.blocking ? "Required" : "Optional"}">${esc(answer)}</textarea>
+    </div>`;
+}
+
+// The first read should be short: a verdict, a handful of lines, and whatever
+// is standing in the way. The tables that used to be here are still one click
+// down, under "Full spec".
 function render(data) {
   const s = data.spec, sub = s.subject, c = s.confidence;
-  const blocking = s.open_questions.filter(q => q.blocking).length;
+  questions = s.open_questions;
+  const blocking = questions.filter(q => q.blocking);
 
-  const kpis = s.kpis.length ? `<div class="scroll"><table>
-      <tr><th>KPI</th><th>Type</th><th>Priority</th><th>Measured by</th><th>Unit</th><th>Target</th><th>Source</th></tr>
-      ${s.kpis.map(k => `<tr>
-        <td><strong>${esc(k.name)}</strong><br><span class="why">${esc(k.definition)}</span></td>
-        <td>${esc(k.kind)}</td><td>${esc(k.priority)}</td><td>${esc(k.measurement)}</td>
-        <td>${k.unit ? esc(k.unit) : "&mdash;"}</td><td>${k.target ? esc(k.target) : "&mdash;"}</td>
-        <td>${esc(k.source)}</td></tr>`).join("")}
-    </table></div>`
-    : `<p class="none">No KPIs identified &mdash; see the questions below.</p>`;
+  const kpiLine = s.kpis.length
+    ? s.kpis.map(k => `${esc(k.name)}${k.target ? ` <span class="why">${esc(k.target)}</span>` : ""}${
+        k.source === "inferred" ? ' <span class="why">assumed</span>' : ""}`)
+        .join(' <span class="sep">/</span> ')
+    : '<span class="none">nothing to score yet</span>';
 
-  const evidence = s.evidence.length ? `<div class="scroll"><table>
-      <tr><th>Kind</th><th>Reference</th><th>Location</th><th>Status</th></tr>
-      ${s.evidence.map(e => `<tr><td>${esc(e.kind)}</td><td>${esc(e.reference)}</td>
-        <td>${e.location ? `<code>${esc(e.location)}</code>` : "&mdash;"}</td>
-        <td>${esc(e.status.replace(/_/g, " "))}</td></tr>`).join("")}
-    </table></div>`
-    : `<p class="none">Nothing supplied &mdash; see the questions below.</p>`;
+  const held = s.evidence.filter(e => e.status === "provided").length;
+  const named = s.evidence.filter(e => e.status === "mentioned_not_provided").length;
+  const evidenceBits = [];
+  if (held) evidenceBits.push(`${held} in hand`);
+  if (named) evidenceBits.push(`${named} referenced, not supplied`);
+  if (s.ground_truth.available) {
+    evidenceBits.push("ground truth" + (s.ground_truth.sample_size
+      ? ` (n=${esc(s.ground_truth.sample_size)})` : ""));
+  }
+  const evidenceLine = evidenceBits.length
+    ? evidenceBits.join(' <span class="sep">/</span> ')
+    : '<span class="none">nothing supplied</span>';
 
-  const questions = s.open_questions.length
-    ? s.open_questions.map(q => `<div class="q ${q.blocking ? "blocking" : ""}">
-        <div>${esc(q.question)} ${q.blocking ? '<span class="tag">blocking</span>' : ""}</div>
-        <div class="why">${esc(q.why)} &middot; <code>${esc(q.field)}</code></div>
-      </div>`).join("")
-    : `<p class="none">Nothing outstanding.</p>`;
+  const answerForm = blocking.length
+    ? `<h2>Answer to unblock</h2>
+       <p>${blocking.length} answer(s) needed. Fill every box below and the spec is
+          classified again with them &mdash; that is what clears the block.</p>
+       ${questions.map((q, i) => q.blocking ? questionBox(q, i) : "").join("")}
+       ${questions.some(q => !q.blocking)
+         ? `<details><summary>${questions.filter(q => !q.blocking).length} other question(s)
+              &mdash; optional, but they sharpen the spec</summary>
+            ${questions.map((q, i) => q.blocking ? "" : questionBox(q, i)).join("")}</details>`
+         : ""}
+       <div class="row">
+         <button class="primary" id="answer">Submit answers</button>
+         <span class="hint" id="answer-hint"></span>
+       </div>`
+    : `<h2>Ground truth</h2>
+       <p>Nothing is blocking. Search the web for datasets, benchmarks, and published
+          numbers this eval could be anchored on.</p>
+       <div class="row"><button class="primary" id="gt">Find ground truth</button></div>
+       ${questions.length
+         ? `<details><summary>${questions.length} open question(s)
+              &mdash; optional, but they sharpen the spec</summary>
+            ${questions.map(questionBox).join("")}
+            <div class="row">
+              <button class="primary" id="answer">Submit answers</button>
+              <span class="hint" id="answer-hint"></span>
+            </div></details>`
+         : ""}`;
 
   $("result").innerHTML = `
     <div class="verdict">
       <span class="badge ${esc(s.readiness)}">${esc(s.readiness.replace(/_/g, " "))}</span>
       <strong>${esc(s.title)}</strong>
-      <span class="meta">${s.open_questions.length} question(s), ${blocking} blocking</span>
+      <span class="meta">${questions.length} question(s), ${blocking.length} blocking</span>
     </div>
     <p>${esc(s.summary)}</p>
-
-    <h2>What we're testing</h2>
-    <h3>${esc(sub.name)} <code>${esc(sub.kind)}</code></h3>
-    <p>${esc(sub.description)}</p>
-    <table>
-      <tr><th>Interface</th><td>${dash(sub.interface)}</td></tr>
-      <tr><th>Inputs</th><td>${dash(sub.inputs)}</td></tr>
-      <tr><th>Outputs</th><td>${dash(sub.outputs)}</td></tr>
-      <tr><th>Eval type</th><td>${s.eval_types.length ? esc(s.eval_types.join(", ")) : dash(null)}</td></tr>
-      <tr><th>In scope</th><td>${list(sub.in_scope, "not stated")}</td></tr>
-      <tr><th>Out of scope</th><td>${list(sub.out_of_scope, "not stated")}</td></tr>
+    <table class="facts">
+      <tr><th>Testing</th><td>${esc(sub.name)} <code>${esc(sub.kind)}</code></td></tr>
+      <tr><th>Judged on</th><td>${kpiLine}</td></tr>
+      <tr><th>Evidence</th><td>${evidenceLine}</td></tr>
+      ${s.assumptions.length ? `<tr><th>Filled in</th><td>
+        <details class="inline"><summary>${s.assumptions.length} thing(s) worked out
+          from the request &mdash; correct any of them in the questions below</summary>
+          ${list(s.assumptions, "")}</details></td></tr>` : ""}
     </table>
 
-    <h2>How success is judged</h2>
-    ${kpis}
+    ${answerForm}
 
-    <h2>Evidence</h2>
-    ${evidence}
-    <p><strong>Ground truth:</strong> ${s.ground_truth.available
-      ? esc(s.ground_truth.description || "available")
-        + (s.ground_truth.sample_size ? ` (n=${esc(s.ground_truth.sample_size)})` : "")
-      : '<span class="none">none identified</span>'}</p>
+    <details><summary>Full spec</summary>
+      <h2>What we're testing</h2>
+      <h3>${esc(sub.name)} <code>${esc(sub.kind)}</code></h3>
+      <p>${esc(sub.description)}</p>
+      <table>
+        <tr><th>Interface</th><td>${dash(sub.interface)}</td></tr>
+        <tr><th>Inputs</th><td>${dash(sub.inputs)}</td></tr>
+        <tr><th>Outputs</th><td>${dash(sub.outputs)}</td></tr>
+        <tr><th>Eval type</th><td>${s.eval_types.length ? esc(s.eval_types.join(", ")) : dash(null)}</td></tr>
+        <tr><th>In scope</th><td>${list(sub.in_scope, "not stated")}</td></tr>
+        <tr><th>Out of scope</th><td>${list(sub.out_of_scope, "not stated")}</td></tr>
+      </table>
 
-    <h2>Constraints</h2>${list(s.constraints, "none stated")}
-    <h2>Assumptions the classifier made</h2>${list(s.assumptions, "none")}
+      <h2>How success is judged</h2>
+      ${s.kpis.length ? `<div class="scroll"><table>
+          <tr><th>KPI</th><th>Type</th><th>Priority</th><th>Measured by</th><th>Unit</th><th>Target</th><th>Source</th></tr>
+          ${s.kpis.map(k => `<tr>
+            <td><strong>${esc(k.name)}</strong><br><span class="why">${esc(k.definition)}</span></td>
+            <td>${esc(k.kind)}</td><td>${esc(k.priority)}</td><td>${esc(k.measurement)}</td>
+            <td>${k.unit ? esc(k.unit) : "&mdash;"}</td><td>${k.target ? esc(k.target) : "&mdash;"}</td>
+            <td>${esc(k.source)}</td></tr>`).join("")}
+        </table></div>`
+        : `<p class="none">No KPIs identified &mdash; see the questions above.</p>`}
 
-    <h2>Open questions</h2>
-    ${questions}
+      <h2>Evidence</h2>
+      ${s.evidence.length ? `<div class="scroll"><table>
+          <tr><th>Kind</th><th>Reference</th><th>Location</th><th>Status</th></tr>
+          ${s.evidence.map(e => `<tr><td>${esc(e.kind)}</td><td>${esc(e.reference)}</td>
+            <td>${e.location ? `<code>${esc(e.location)}</code>` : "&mdash;"}</td>
+            <td>${esc(e.status.replace(/_/g, " "))}</td></tr>`).join("")}
+        </table></div>`
+        : `<p class="none">Nothing supplied &mdash; see the questions above.</p>`}
+      <p><strong>Ground truth:</strong> ${s.ground_truth.available
+        ? esc(s.ground_truth.description || "available")
+          + (s.ground_truth.sample_size ? ` (n=${esc(s.ground_truth.sample_size)})` : "")
+        : '<span class="none">none identified</span>'}</p>
 
-    <h2>Confidence</h2>
-    <p class="mono">subject ${c.subject.toFixed(2)} &middot; kpis ${c.kpis.toFixed(2)} &middot; evidence ${c.evidence.toFixed(2)} &middot; overall ${c.overall.toFixed(2)}</p>
+      <h2>Constraints</h2>${list(s.constraints, "none stated")}
+      <h2>Assumptions the classifier made</h2>${list(s.assumptions, "none")}
 
+      <h2>Confidence</h2>
+      <p class="mono">subject ${c.subject.toFixed(2)} &middot; kpis ${c.kpis.toFixed(2)} &middot; evidence ${c.evidence.toFixed(2)} &middot; overall ${c.overall.toFixed(2)}</p>
+    </details>
     <details><summary>Task document (markdown)</summary><pre>${esc(data.markdown)}</pre></details>
-    <details><summary>Raw JSON</summary><pre>${esc(JSON.stringify(s, null, 2))}</pre></details>
-
-    <h2>Ground truth</h2>
-    ${blocking
-      ? `<p class="none">Waiting on the ${blocking} blocking question(s) above &mdash; searching for
-         baselines before the KPIs are settled just returns plausible noise.</p>`
-      : `<p>Nothing is blocking. Search the web for datasets, benchmarks, and published
-         numbers this eval could be anchored on.</p>
-         <div class="row"><button class="primary" id="gt">Find ground truth</button></div>`}`;
+    <details><summary>Raw JSON</summary><pre>${esc(JSON.stringify(s, null, 2))}</pre></details>`;
 
   lastSpec = s;
   lastReport = null;
@@ -291,7 +380,43 @@ function render(data) {
   $("exresult").hidden = true;
   const gtBtn = $("gt");
   if (gtBtn) gtBtn.onclick = groundTruth;
+  wireAnswers(questions);
   $("result").hidden = false;
+}
+
+// Every box reports back as it is typed in, so the submit button is only live
+// once each blocking question has something in it.
+function wireAnswers(questions) {
+  const btn = $("answer");
+  if (!btn) return;
+  btn.onclick = submitAnswers;
+  questions.forEach((q, i) => {
+    const box = $("ans" + i);
+    if (box) box.oninput = () => { box.classList.toggle("filled", !!box.value.trim()); answerState(); };
+    if (box) box.classList.toggle("filled", !!box.value.trim());
+  });
+  answerState();
+}
+
+function answerState() {
+  const btn = $("answer");
+  if (!btn) return;
+  let blocking = 0, outstanding = 0, given = 0;
+  questions.forEach((q, i) => {
+    if (filled(i)) given += 1;
+    if (!q.blocking) return;
+    blocking += 1;
+    if (!filled(i)) outstanding += 1;
+  });
+  // Every blocking box must be filled; with nothing blocking, one answer is
+  // enough to be worth another pass.
+  btn.disabled = blocking ? outstanding > 0 : given === 0;
+  const hint = $("answer-hint");
+  if (hint) {
+    hint.textContent = outstanding
+      ? `${outstanding} of ${blocking} still to answer`
+      : (btn.disabled ? "" : "ready to re-classify");
+  }
 }
 
 function renderReport(data) {
@@ -472,31 +597,47 @@ async function groundTruth() {
   }
 }
 
-async function run() {
-  const text = $("input").value.trim();
-  if (!text) { banner("err", "Type a request first."); return; }
-
-  const btn = $("go");
+async function classify(text, answers, btn, busy, idle) {
   btn.disabled = true;
-  btn.textContent = "Classifying\u2026";
+  btn.textContent = busy;
   banner("", "");
 
   try {
     const r = await fetch("/api/classify", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, answers }),
     });
     const body = await r.json();
     if (!r.ok) { banner("err", body.detail || `Request failed (${r.status})`); return; }
+    lastText = text;
+    answered = answers;
     render(body);
     $("result").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (e) {
     banner("err", `Could not reach the server: ${e.message}`);
   } finally {
+    // The answer form is rebuilt by render(), so this only matters when the
+    // button survived - a failed request, or the top-level Classify button.
     btn.disabled = false;
-    btn.textContent = "Classify";
+    btn.textContent = idle;
   }
+}
+
+async function run() {
+  const text = $("input").value.trim();
+  if (!text) { banner("err", "Type a request first."); return; }
+  // Editing the request starts over; answers to the old one need not fit it.
+  if (text !== lastText) answered = [];
+  await classify(text, answered, $("go"), "Classifying\u2026", "Classify");
+}
+
+// Re-classify the original request with the answers appended. Whether the
+// block clears is then the classifier's verdict on the answers, not ours.
+async function submitAnswers() {
+  if (!lastText) return;
+  await classify(lastText, collectAnswers(), $("answer"),
+    "Re-classifying\u2026", "Submit answers");
 }
 
 $("go").onclick = run;
@@ -508,6 +649,9 @@ $("clear").onclick = () => {
   $("exresult").hidden = true;
   lastSpec = null;
   lastReport = null;
+  lastText = "";
+  questions = [];
+  answered = [];
   banner("", "");
 };
 $("input").addEventListener("keydown", e => {

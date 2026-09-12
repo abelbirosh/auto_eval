@@ -3,6 +3,7 @@
 from .analysis import AnalysisReport, analyze_sources
 from .classifier import ClassifierError, classify, list_models
 from .config import DEFAULT_MODEL, Settings, get_settings
+from .derive import derive
 from .gaps import analyze, rule_questions
 from .ground_truth import GroundTruthError, GroundTruthReport, gate, identify
 from .render import (
@@ -11,13 +12,14 @@ from .render import (
     render_markdown,
     render_questions,
 )
-from .schema import TaskSpec
+from .schema import Answer, TaskSpec
 
 __version__ = "0.1.0"
 
 __all__ = [
     "DEFAULT_MODEL",
     "AnalysisReport",
+    "Answer",
     "ClassifierError",
     "GroundTruthError",
     "GroundTruthReport",
@@ -26,6 +28,7 @@ __all__ = [
     "analyze",
     "analyze_sources",
     "classify",
+    "derive",
     "gate",
     "get_settings",
     "identify",

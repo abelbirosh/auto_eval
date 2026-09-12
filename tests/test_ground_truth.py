@@ -72,13 +72,20 @@ class FakeClient:
 # --- the gate -------------------------------------------------------------
 
 
-def test_gate_stays_shut_while_a_blocking_question_is_open(sparse_spec):
+def test_gate_stays_shut_while_a_blocking_question_is_open(subjectless_spec):
     from auto_eval.gaps import analyze
 
-    decision = gate(analyze(sparse_spec))
+    decision = gate(analyze(subjectless_spec))
     assert decision.open is False
     assert "blocking" in decision.reason
     assert decision.blocking
+
+
+def test_a_thin_but_intelligible_request_does_not_hold_the_gate_shut(sparse_spec):
+    """A one-line request is thin, not unusable: derive fills it and it passes."""
+    from auto_eval.gaps import analyze
+
+    assert gate(analyze(sparse_spec)).open is True
 
 
 def test_gate_opens_once_nothing_blocks(full_spec):
@@ -101,17 +108,19 @@ def test_gate_refuses_a_hand_built_spec_with_no_kpis(full_spec):
     assert gate(full_spec).open is False
 
 
-def test_identify_refuses_to_search_behind_a_shut_gate(sparse_spec):
+def test_identify_refuses_to_search_behind_a_shut_gate(subjectless_spec):
     from auto_eval.gaps import analyze
 
     with pytest.raises(GroundTruthError, match="Not ready to search"):
-        identify(analyze(sparse_spec), client=FakeClient(findings()))
+        identify(analyze(subjectless_spec), client=FakeClient(findings()))
 
 
-def test_force_searches_anyway(sparse_spec):
+def test_force_searches_anyway(subjectless_spec):
     from auto_eval.gaps import analyze
 
-    report = identify(analyze(sparse_spec), client=FakeClient(findings()), force=True)
+    report = identify(
+        analyze(subjectless_spec), client=FakeClient(findings()), force=True
+    )
     assert report.verdict is Availability.NONE_FOUND
 
 

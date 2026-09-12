@@ -3,12 +3,17 @@
 The model is good at reading a request and bad at reliably noticing what is
 missing from it. So the questions that decide whether we can build an eval are
 generated here, from rules, and merged with whatever the model asked. Readiness
-is computed here too - the model's own guess is discarded.
+is computed here too - the model's own guess is discarded, and so is its view of
+what blocks: a question the model raised always comes back non-blocking, because
+it will happily call a nice-to-have a showstopper.
 
-Only one rule blocks: no KPIs at all, which leaves nothing to score. Everything
-else - a missing entry point, absent ground truth, no documentation - is worth
-asking about but does not stop a spec from being written, so it comes back as a
-normal question and the spec reads `needs_input` rather than `insufficient`.
+Blocking is kept to what is genuinely unrecoverable. `auto_eval.derive` runs
+first and fills in everything the spec implies - a KPI, a grading method, a
+primary metric - so in practice the only way to block is to leave us with no
+idea what is under test. Everything else - a missing entry point, absent ground
+truth, no documentation, no threshold - is worth asking about but does not stop
+a spec from being written, so it comes back as a normal question and the spec
+reads `needs_input` rather than `insufficient`.
 """
 
 from __future__ import annotations
@@ -16,6 +21,7 @@ from __future__ import annotations
 import re
 from typing import List
 
+from .derive import derive
 from .schema import (
     EvidenceKind,
     EvidenceStatus,
@@ -80,6 +86,15 @@ def rule_questions(spec: TaskSpec) -> List[Question]:
     out: List[Question] = []
 
     # --- what are we testing -------------------------------------------------
+    if not spec.subject.name.strip() and not spec.subject.description.strip():
+        out.append(
+            Question(
+                field="subject",
+                question="What is the thing you want evaluated - the system, prompt, or model under test?",
+                why="Nothing in the request names something to test, so there is nothing to point an eval at.",
+                blocking=True,
+            )
+        )
     if not spec.subject.interface:
         out.append(
             Question(
@@ -104,6 +119,8 @@ def rule_questions(spec: TaskSpec) -> List[Question]:
 
     # --- how success is judged ----------------------------------------------
     if not spec.kpis:
+        # `derive` proposes one for any spec that came through `analyze`, so this
+        # only fires on a spec assembled by hand with no metric at all.
         out.append(
             Question(
                 field="kpis",
@@ -236,14 +253,19 @@ def rule_questions(spec: TaskSpec) -> List[Question]:
 def merge_questions(
     model_questions: List[Question], rules: List[Question]
 ) -> List[Question]:
-    """Rule questions win; model questions survive when they ask something new."""
+    """Rule questions win; model questions survive when they ask something new.
+
+    A model question never blocks, whatever flag it arrived with. Deciding that
+    an eval cannot be built is a rule's job: left to the model, "send me your
+    transcripts" comes back as a showstopper and the pipeline never moves.
+    """
     merged: List[Question] = []
     for question in rules:
         if not _is_duplicate(question, merged):
             merged.append(question)
     for question in model_questions:
         if not _is_duplicate(question, merged):
-            merged.append(question)
+            merged.append(question.model_copy(update={"blocking": False}))
     merged.sort(key=lambda q: not q.blocking)  # blocking first, order preserved within
     return merged
 
@@ -257,9 +279,14 @@ def readiness_for(questions: List[Question]) -> Readiness:
 
 
 def analyze(spec: TaskSpec) -> TaskSpec:
-    """Return a copy of `spec` with merged questions and a computed readiness."""
-    questions = merge_questions(spec.open_questions, rule_questions(spec))
-    return spec.model_copy(
+    """Fill what can be derived, then return questions and a computed readiness.
+
+    Derivation runs first on purpose: a hole the system just filled should not
+    come back as a question, let alone a blocking one.
+    """
+    derived = derive(spec)
+    questions = merge_questions(derived.open_questions, rule_questions(derived))
+    return derived.model_copy(
         update={
             "open_questions": questions,
             "readiness": readiness_for(questions),
