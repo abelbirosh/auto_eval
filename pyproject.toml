@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "ruff>=0.6", "mypy>=1.11"]
+dev = ["pytest>=9.1.1", "ruff>=0.6", "mypy>=1.11"]
 web = ["fastapi>=0.110", "uvicorn>=0.27"]
 
 [project.scripts]
