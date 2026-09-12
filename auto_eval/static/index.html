@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Auto_Eval</title>
+<style>
+  :root {
+    --bg: #fbfbfa; --panel: #fff; --ink: #1b1b19; --muted: #6b6b66;
+    --line: #e3e2dd; --accent: #3d5a4c; --accent-ink: #fff;
+    --ready: #2f6b4f; --needs: #8a6d1f; --blocked: #9b3b31;
+    --ready-bg: #e8f2ec; --needs-bg: #faf1dc; --blocked-bg: #fbe9e7;
+    --code: #f3f2ef;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #16171a; --panel: #1e1f23; --ink: #e9e8e4; --muted: #9a9a94;
+      --line: #2e2f34; --accent: #7fae96; --accent-ink: #12211a;
+      --ready: #7fc9a2; --needs: #dcb75e; --blocked: #e58a7e;
+      --ready-bg: #1d2b24; --needs-bg: #2c2718; --blocked-bg: #2e1e1c;
+      --code: #26272c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 32px 20px 80px; }
+  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+  h1 { font-size: 21px; margin: 0; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 13.5px; margin: 0 0 22px; }
+  .meta { margin-left: auto; font-size: 12px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  textarea {
+    width: 100%; min-height: 150px; resize: vertical; padding: 12px;
+    border: 1px solid var(--line); border-radius: 8px; background: var(--bg);
+    color: var(--ink); font: inherit; line-height: 1.5;
+  }
+  textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .row { display: flex; gap: 10px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+  button {
+    font: inherit; font-weight: 550; padding: 8px 16px; border-radius: 7px;
+    border: 1px solid transparent; cursor: pointer;
+  }
+  .primary { background: var(--accent); color: var(--accent-ink); }
+  .primary:disabled { opacity: .55; cursor: progress; }
+  .ghost { background: transparent; color: var(--muted); border-color: var(--line); }
+  .ghost:hover { color: var(--ink); }
+  .hint { color: var(--muted); font-size: 12.5px; margin-left: auto; }
+  .banner { padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; font-size: 13.5px; }
+  .banner.warn { background: var(--needs-bg); color: var(--needs); }
+  .banner.err  { background: var(--blocked-bg); color: var(--blocked); }
+  section.result { margin-top: 28px; }
+  .verdict { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+  .badge {
+    font-size: 12px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase;
+    padding: 4px 10px; border-radius: 999px;
+  }
+  .badge.ready { background: var(--ready-bg); color: var(--ready); }
+  .badge.needs_input { background: var(--needs-bg); color: var(--needs); }
+  .badge.insufficient { background: var(--blocked-bg); color: var(--blocked); }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em;
+       color: var(--muted); margin: 26px 0 10px; font-weight: 650; }
+  h3 { font-size: 16px; margin: 0 0 4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .scroll { overflow-x: auto; }
+  ul { margin: 6px 0; padding-left: 20px; }
+  li { margin: 4px 0; }
+  .q { border-left: 3px solid var(--line); padding: 2px 0 2px 14px; margin: 12px 0; }
+  .q.blocking { border-left-color: var(--blocked); }
+  .q .why { color: var(--muted); font-size: 13px; }
+  .tag { font-size: 11px; font-weight: 650; color: var(--blocked); text-transform: uppercase; letter-spacing: .04em; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  code { background: var(--code); padding: 1px 5px; border-radius: 4px; }
+  .none { color: var(--muted); font-style: italic; }
+  pre { background: var(--code); padding: 14px; border-radius: 8px; overflow-x: auto;
+        font-size: 12.5px; line-height: 1.5; }
+  details { margin-top: 22px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  .spin { display: inline-block; width: 13px; height: 13px; border: 2px solid currentColor;
+          border-right-color: transparent; border-radius: 50%; animation: r .7s linear infinite;
+          vertical-align: -2px; margin-right: 7px; }
+  @keyframes r { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Auto_Eval</h1>
+    <span class="meta" id="meta"></span>
+  </header>
+  <p class="sub">Describe something you want evaluated. The classifier pulls out what's under test, the KPIs, and the evidence &mdash; then tells you what's missing.</p>
+
+  <div id="banner"></div>
+
+  <div class="panel">
+    <textarea id="input" placeholder="e.g. We've got a support bot that handles billing questions. Customers say it sounds robotic and it sometimes quotes the wrong refund window. I want to know if it's getting the policy right before we roll it out to the EU."></textarea>
+    <div class="row">
+      <button class="primary" id="go">Classify</button>
+      <button class="ghost" id="example">Load example</button>
+      <button class="ghost" id="clear">Clear</button>
+      <span class="hint">&#8984;&#8617; to run</span>
+    </div>
+  </div>
+
+  <section class="result" id="result" hidden></section>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c =>
+  ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+const dash = (v) => v ? esc(v) : '<span class="none">not stated</span>';
+
+const EXAMPLE = `We've got a support bot that handles billing questions in our chat widget. It's an agent with a few tools (lookup_account, list_invoices, issue_refund). Customers complain it sounds robotic and it occasionally quotes the wrong refund window. I want to know if it's actually getting the policy right before we roll it out to the EU. Our billing policy lives in Notion. Ideally it'd be right at least 90% of the time. We've got about six months of chat transcripts.`;
+
+function banner(kind, msg) {
+  $("banner").innerHTML = msg ? `<div class="banner ${kind}">${esc(msg)}</div>` : "";
+}
+
+async function health() {
+  try {
+    const r = await fetch("/api/health");
+    const h = await r.json();
+    $("meta").textContent = h.model;
+    if (!h.has_key) banner("warn", "No OPENAI_API_KEY found. Add it to your .env, then restart the server.");
+  } catch { /* server info is a nicety; the form still works */ }
+}
+
+function list(items, empty) {
+  if (!items || !items.length) return `<p class="none">${esc(empty)}</p>`;
+  return `<ul>${items.map(i => `<li>${esc(i)}</li>`).join("")}</ul>`;
+}
+
+function render(data) {
+  const s = data.spec, sub = s.subject, c = s.confidence;
+  const blocking = s.open_questions.filter(q => q.blocking).length;
+
+  const kpis = s.kpis.length ? `<div class="scroll"><table>
+      <tr><th>KPI</th><th>Type</th><th>Priority</th><th>Measured by</th><th>Unit</th><th>Target</th><th>Source</th></tr>
+      ${s.kpis.map(k => `<tr>
+        <td><strong>${esc(k.name)}</strong><br><span class="why">${esc(k.definition)}</span></td>
+        <td>${esc(k.kind)}</td><td>${esc(k.priority)}</td><td>${esc(k.measurement)}</td>
+        <td>${k.unit ? esc(k.unit) : "&mdash;"}</td><td>${k.target ? esc(k.target) : "&mdash;"}</td>
+        <td>${esc(k.source)}</td></tr>`).join("")}
+    </table></div>`
+    : `<p class="none">No KPIs identified &mdash; see the questions below.</p>`;
+
+  const evidence = s.evidence.length ? `<div class="scroll"><table>
+      <tr><th>Kind</th><th>Reference</th><th>Location</th><th>Status</th></tr>
+      ${s.evidence.map(e => `<tr><td>${esc(e.kind)}</td><td>${esc(e.reference)}</td>
+        <td>${e.location ? `<code>${esc(e.location)}</code>` : "&mdash;"}</td>
+        <td>${esc(e.status.replace(/_/g, " "))}</td></tr>`).join("")}
+    </table></div>`
+    : `<p class="none">Nothing supplied &mdash; see the questions below.</p>`;
+
+  const questions = s.open_questions.length
+    ? s.open_questions.map(q => `<div class="q ${q.blocking ? "blocking" : ""}">
+        <div>${esc(q.question)} ${q.blocking ? '<span class="tag">blocking</span>' : ""}</div>
+        <div class="why">${esc(q.why)} &middot; <code>${esc(q.field)}</code></div>
+      </div>`).join("")
+    : `<p class="none">Nothing outstanding.</p>`;
+
+  $("result").innerHTML = `
+    <div class="verdict">
+      <span class="badge ${esc(s.readiness)}">${esc(s.readiness.replace(/_/g, " "))}</span>
+      <strong>${esc(s.title)}</strong>
+      <span class="meta">${s.open_questions.length} question(s), ${blocking} blocking</span>
+    </div>
+    <p>${esc(s.summary)}</p>
+
+    <h2>What we're testing</h2>
+    <h3>${esc(sub.name)} <code>${esc(sub.kind)}</code></h3>
+    <p>${esc(sub.description)}</p>
+    <table>
+      <tr><th>Interface</th><td>${dash(sub.interface)}</td></tr>
+      <tr><th>Inputs</th><td>${dash(sub.inputs)}</td></tr>
+      <tr><th>Outputs</th><td>${dash(sub.outputs)}</td></tr>
+      <tr><th>Eval type</th><td>${s.eval_types.length ? esc(s.eval_types.join(", ")) : dash(null)}</td></tr>
+      <tr><th>In scope</th><td>${list(sub.in_scope, "not stated")}</td></tr>
+      <tr><th>Out of scope</th><td>${list(sub.out_of_scope, "not stated")}</td></tr>
+    </table>
+
+    <h2>How success is judged</h2>
+    ${kpis}
+
+    <h2>Evidence</h2>
+    ${evidence}
+    <p><strong>Ground truth:</strong> ${s.ground_truth.available
+      ? esc(s.ground_truth.description || "available")
+        + (s.ground_truth.sample_size ? ` (n=${esc(s.ground_truth.sample_size)})` : "")
+      : '<span class="none">none identified</span>'}</p>
+
+    <h2>Constraints</h2>${list(s.constraints, "none stated")}
+    <h2>Assumptions the classifier made</h2>${list(s.assumptions, "none")}
+
+    <h2>Open questions</h2>
+    ${questions}
+
+    <h2>Confidence</h2>
+    <p class="mono">subject ${c.subject.toFixed(2)} &middot; kpis ${c.kpis.toFixed(2)} &middot; evidence ${c.evidence.toFixed(2)} &middot; overall ${c.overall.toFixed(2)}</p>
+
+    <details><summary>Task document (markdown)</summary><pre>${esc(data.markdown)}</pre></details>
+    <details><summary>Raw JSON</summary><pre>${esc(JSON.stringify(s, null, 2))}</pre></details>`;
+  $("result").hidden = false;
+}
+
+async function run() {
+  const text = $("input").value.trim();
+  if (!text) { banner("err", "Type a request first."); return; }
+
+  const btn = $("go");
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span>Classifying';
+  banner("", "");
+
+  try {
+    const r = await fetch("/api/classify", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    const body = await r.json();
+    if (!r.ok) { banner("err", body.detail || `Request failed (${r.status})`); return; }
+    render(body);
+    $("result").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (e) {
+    banner("err", `Could not reach the server: ${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Classify";
+  }
+}
+
+$("go").onclick = run;
+$("example").onclick = () => { $("input").value = EXAMPLE; $("input").focus(); };
+$("clear").onclick = () => { $("input").value = ""; $("result").hidden = true; banner("", ""); };
+$("input").addEventListener("keydown", e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") run();
+});
+health();
+</script>
+</body>
+</html>

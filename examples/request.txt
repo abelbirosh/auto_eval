@@ -1,0 +1,6 @@
+We've got a support bot that handles billing questions in our chat widget. It's
+a Claude agent with a few tools (lookup_account, list_invoices, issue_refund).
+Customers complain it sounds robotic and it occasionally quotes the wrong refund
+window. I want to know if it's actually getting the policy right before we roll
+it out to the EU. Our billing policy lives in Notion. Ideally it'd be right at
+least 90% of the time. We've got about six months of chat transcripts.
