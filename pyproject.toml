@@ -9,13 +9,14 @@ description = "Turn a free-form request into a structured evaluation task spec."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "httpx>=0.27",       # fetching the sources the ground-truth block finds
     "openai>=1.40",
     "pydantic>=2.0",
     "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "httpx>=0.27", "ruff>=0.6", "mypy>=1.11"]
+dev = ["pytest>=7", "ruff>=0.6", "mypy>=1.11"]
 web = ["fastapi>=0.110", "uvicorn>=0.27"]
 
 [project.scripts]
@@ -56,6 +57,11 @@ ignore = [
     # it into a hundred-element list literal would only make it harder to edit.
     "SIM905",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# The test factories build kwargs with `dict(...)`; the keyword form is the
+# point, and quoting every key would read worse.
+"tests/*" = ["C408"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["auto_eval"]

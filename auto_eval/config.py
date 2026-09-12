@@ -20,6 +20,9 @@ DEFAULT_MODEL = "gpt-5-mini"
 API_KEY_VAR = "OPENAI_API_KEY"
 MODEL_VAR = "AUTO_EVAL_MODEL"
 BASE_URL_VAR = "AUTO_EVAL_BASE_URL"
+# The ground-truth search reads the open web and is worth spending more on than
+# extraction; left unset it uses the same model as everything else.
+SEARCH_MODEL_VAR = "AUTO_EVAL_SEARCH_MODEL"
 
 _ENV_LOADED = False
 
@@ -55,19 +58,30 @@ class Settings:
     api_key: Optional[str]
     model: str
     base_url: Optional[str]
+    # None means "same model as everything else"; callers read it through
+    # `effective_search_model` so a hand-built Settings needs only three fields.
+    search_model: Optional[str] = None
 
     @property
     def has_key(self) -> bool:
         return bool(self.api_key and self.api_key.strip())
 
+    @property
+    def effective_search_model(self) -> str:
+        return self.search_model or self.model
+
 
 def get_settings(*, model: Optional[str] = None) -> Settings:
     """Resolve settings. An explicit `model` argument beats the environment."""
     load_env()
+    resolved = model or os.environ.get(MODEL_VAR) or DEFAULT_MODEL
     return Settings(
         api_key=os.environ.get(API_KEY_VAR),
-        model=model or os.environ.get(MODEL_VAR) or DEFAULT_MODEL,
+        model=resolved,
         base_url=os.environ.get(BASE_URL_VAR) or None,
+        # An explicit argument is a deliberate choice for this call, so it wins
+        # over the search-specific variable too.
+        search_model=model or os.environ.get(SEARCH_MODEL_VAR) or resolved,
     )
 
 
@@ -76,6 +90,7 @@ __all__ = [
     "BASE_URL_VAR",
     "DEFAULT_MODEL",
     "MODEL_VAR",
+    "SEARCH_MODEL_VAR",
     "Settings",
     "get_settings",
     "load_env",

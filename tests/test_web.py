@@ -79,3 +79,135 @@ def test_classifier_errors_become_readable_400s(client, monkeypatch):
 
 def test_missing_text_is_a_validation_error(client):
     assert client.post("/api/classify", json={}).status_code == 422
+
+
+def test_ground_truth_returns_a_report_for_an_unblocked_spec(
+    client, monkeypatch, full_spec
+):
+    from auto_eval.ground_truth import SourceFindings, assess
+
+    captured = {}
+
+    def fake_identify(spec, **kwargs):
+        captured["subject"] = spec.subject.name
+        captured.update(kwargs)
+        return assess(spec, SourceFindings(recommendation="Label your own."))
+
+    monkeypatch.setattr(web, "identify", fake_identify)
+
+    response = client.post(
+        "/api/ground-truth",
+        json={"spec": analyze(full_spec).model_dump(mode="json"), "model": "gpt-5"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert captured["subject"] == "invoice extractor"
+    assert captured["model"] == "gpt-5"
+    assert body["report"]["verdict"] == "none_found"
+    assert "Ground truth for invoice extractor" in body["markdown"]
+
+
+def test_ground_truth_refuses_a_spec_that_still_blocks(
+    client, monkeypatch, sparse_spec
+):
+    def boom(spec, **kwargs):  # pragma: no cover - must not be reached
+        raise AssertionError("the gate should have stopped this")
+
+    monkeypatch.setattr(web, "identify", boom)
+
+    response = client.post(
+        "/api/ground-truth", json={"spec": analyze(sparse_spec).model_dump(mode="json")}
+    )
+
+    assert response.status_code == 409
+    assert "Not ready to search" in response.json()["detail"]
+
+
+def test_a_spec_that_arrives_claiming_readiness_is_re_checked(
+    client, monkeypatch, sparse_spec
+):
+    """The gate reads the questions, not the readiness field the caller sent."""
+    payload = analyze(sparse_spec).model_dump(mode="json")
+    payload["readiness"] = "ready"
+
+    monkeypatch.setattr(web, "identify", lambda spec, **kw: None)
+    assert client.post("/api/ground-truth", json={"spec": payload}).status_code == 409
+
+
+def test_analyze_returns_the_analysis_and_the_document(client, monkeypatch, full_spec):
+    from auto_eval.analysis import (
+        AnalysisReport,
+        DownloadPlan,
+        Reachability,
+        ResourceAnalysis,
+        Usability,
+    )
+    from auto_eval.ground_truth import Availability, GroundTruthReport, SourceKind
+
+    captured = {}
+
+    def fake_analyze(spec, report, **kwargs):
+        captured["subject"] = spec.subject.name
+        captured["sources"] = len(report.sources)
+        captured.update(kwargs)
+        return AnalysisReport(
+            subject=spec.subject.name,
+            resources=[
+                ResourceAnalysis(
+                    source="Acme invoices",
+                    url="https://huggingface.co/datasets/acme/invoices",
+                    kind=SourceKind.DATASET,
+                    reachability=Reachability.OK,
+                    usability=Usability.GROUND_TRUTH,
+                    plan=DownloadPlan(
+                        what="1,000 rows from acme/invoices",
+                        url="https://huggingface.co/datasets/acme/invoices",
+                    ),
+                )
+            ],
+        )
+
+    monkeypatch.setattr(web, "analyze_sources", fake_analyze)
+
+    response = client.post(
+        "/api/analyze",
+        json={
+            "spec": analyze(full_spec).model_dump(mode="json"),
+            "report": GroundTruthReport(
+                subject="invoice extractor", verdict=Availability.LABELLED_DATA
+            ).model_dump(mode="json"),
+            "model": "gpt-5",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert captured["subject"] == "invoice extractor"
+    assert captured["model"] == "gpt-5"
+    assert (
+        body["analysis"]["resources"][0]["plan"]["what"]
+        == "1,000 rows from acme/invoices"
+    )
+    assert "Source analysis for invoice extractor" in body["markdown"]
+
+
+def test_analysis_errors_become_readable_400s(client, monkeypatch, full_spec):
+    from auto_eval.ground_truth import Availability, GroundTruthError, GroundTruthReport
+
+    def boom(spec, report, **kwargs):
+        raise GroundTruthError("Rate limited or out of quota.")
+
+    monkeypatch.setattr(web, "analyze_sources", boom)
+
+    response = client.post(
+        "/api/analyze",
+        json={
+            "spec": analyze(full_spec).model_dump(mode="json"),
+            "report": GroundTruthReport(
+                subject="x", verdict=Availability.NONE_FOUND
+            ).model_dump(mode="json"),
+        },
+    )
+    assert response.status_code == 400
+    assert "Rate limited" in response.json()["detail"]
