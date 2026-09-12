@@ -4,6 +4,11 @@ The model is good at reading a request and bad at reliably noticing what is
 missing from it. So the questions that decide whether we can build an eval are
 generated here, from rules, and merged with whatever the model asked. Readiness
 is computed here too - the model's own guess is discarded.
+
+Only one rule blocks: no KPIs at all, which leaves nothing to score. Everything
+else - a missing entry point, absent ground truth, no documentation - is worth
+asking about but does not stop a spec from being written, so it comes back as a
+normal question and the spec reads `needs_input` rather than `insufficient`.
 """
 
 from __future__ import annotations
@@ -83,8 +88,8 @@ def rule_questions(spec: TaskSpec) -> List[Question]:
                     f"How is {spec.subject.name or 'the system under test'} invoked - "
                     "a CLI command, an HTTP endpoint, a function, a prompt template?"
                 ),
-                why="The harness cannot call the system under test without an entry point.",
-                blocking=True,
+                why="The harness needs an entry point before it can run, though the rest of the spec does not depend on it.",
+                blocking=False,
             )
         )
     if not spec.subject.in_scope and not spec.subject.out_of_scope:
@@ -222,8 +227,8 @@ def rule_questions(spec: TaskSpec) -> List[Question]:
             Question(
                 field="ground_truth",
                 question="For the programmatic checks, where does the expected answer come from - labelled data, a reference implementation, or hand-written cases?",
-                why="A programmatic grader needs something to compare against.",
-                blocking=True,
+                why="A programmatic grader needs something to compare against; without it those KPIs fall back to a judge.",
+                blocking=False,
             )
         )
 

@@ -71,17 +71,17 @@ words, an optional `location`, and a `status`:
 
 The model extracts; it does not decide. `auto_eval.gaps` recomputes
 `open_questions` and `readiness` from rules after every classification, and the
-model's own guess is discarded. The rules that block are:
+model's own guess is discarded.
 
-| Rule | Why it blocks |
-| --- | --- |
-| No `subject.interface` | The harness cannot call the system under test. |
-| No `kpis` | Nothing to score. |
-| A `programmatic` KPI with no ground truth | The grader has nothing to compare against. |
+**One rule blocks: no `kpis`.** With nothing to score there is no eval to build,
+and the spec reads `insufficient`.
 
-Everything else — no primary KPI, an untargeted KPI, a judged quality with no
-anchoring examples, missing docs, missing successful runs, missing failure cases,
-evidence referenced but not supplied — produces a non-blocking question.
+Everything else produces a normal question and the spec reads `needs_input` — a
+missing entry point, no ground truth behind a programmatic KPI, no primary KPI,
+an untargeted KPI, a judged quality with no anchoring examples, missing docs,
+missing successful runs, missing failure cases, evidence referenced but not
+supplied. These are all worth chasing, but none of them stops a spec from being
+written and reviewed.
 
 Two rules fire on *every* spec that lacks them, because they are what separates
 an anchored eval from a guessed one: ask for documentation, and ask for examples
