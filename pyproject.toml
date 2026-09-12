@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "auto-eval"
+version = "0.1.0"
+description = "Turn a free-form request into a structured evaluation task spec."
+requires-python = ">=3.10"
+dependencies = [
+    "anthropic>=1.0.0",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+auto-eval = "auto_eval.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["auto_eval*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
