@@ -106,15 +106,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-tokens", type=int, default=DEFAULT_MAX_TOKENS, help="Output token cap."
     )
     classify_cmd.add_argument(
-        "--format", choices=["markdown", "json"], default="markdown", help="Stdout format."
+        "--format",
+        choices=["markdown", "json"],
+        default="markdown",
+        help="Stdout format.",
     )
     classify_cmd.add_argument(
         "--questions-only",
         action="store_true",
         help="Print only the open questions.",
     )
-    classify_cmd.add_argument("--json", metavar="PATH", help="Also write the spec as JSON.")
-    classify_cmd.add_argument("--md", metavar="PATH", help="Also write the task document.")
+    classify_cmd.add_argument(
+        "--json", metavar="PATH", help="Also write the spec as JSON."
+    )
+    classify_cmd.add_argument(
+        "--md", metavar="PATH", help="Also write the task document."
+    )
     classify_cmd.set_defaults(func=_cmd_classify)
 
     serve_cmd = sub.add_parser(
@@ -129,9 +136,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     serve_cmd.set_defaults(func=_cmd_serve)
 
-    models_cmd = sub.add_parser(
-        "models", help="List model IDs this API key can reach."
-    )
+    models_cmd = sub.add_parser("models", help="List model IDs this API key can reach.")
     models_cmd.set_defaults(func=_cmd_models)
 
     schema_cmd = sub.add_parser("schema", help="Print the TaskSpec JSON schema.")

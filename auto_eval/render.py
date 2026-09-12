@@ -64,8 +64,12 @@ def render_markdown(spec: TaskSpec) -> str:
         f"- **Interface:** {_or_unknown(spec.subject.interface)}",
         f"- **Inputs:** {_or_unknown(spec.subject.inputs)}",
         f"- **Outputs:** {_or_unknown(spec.subject.outputs)}",
-        f"- **Evaluation type:** "
-        + (", ".join(t.value for t in spec.eval_types) if spec.eval_types else "_not stated_"),
+        "- **Evaluation type:** "
+        + (
+            ", ".join(t.value for t in spec.eval_types)
+            if spec.eval_types
+            else "_not stated_"
+        ),
         "",
         "**In scope**",
         "",

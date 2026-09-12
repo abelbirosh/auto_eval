@@ -38,29 +38,29 @@ class SubjectKind(str, Enum):
 class EvalType(str, Enum):
     """Why we are evaluating. A task can be several of these at once."""
 
-    CAPABILITY = "capability"          # can it do the job at all
-    REGRESSION = "regression"          # did a change break what worked
-    COMPARATIVE = "comparative"        # A vs B (models, prompts, versions)
-    SAFETY = "safety"                  # harmful, policy-violating output
-    ROBUSTNESS = "robustness"          # adversarial or messy input
-    PERFORMANCE = "performance"        # latency, throughput
-    COST = "cost"                      # spend per task
-    COMPLIANCE = "compliance"          # format, schema, contractual rules
+    CAPABILITY = "capability"  # can it do the job at all
+    REGRESSION = "regression"  # did a change break what worked
+    COMPARATIVE = "comparative"  # A vs B (models, prompts, versions)
+    SAFETY = "safety"  # harmful, policy-violating output
+    ROBUSTNESS = "robustness"  # adversarial or messy input
+    PERFORMANCE = "performance"  # latency, throughput
+    COST = "cost"  # spend per task
+    COMPLIANCE = "compliance"  # format, schema, contractual rules
 
 
 class MetricKind(str, Enum):
-    QUANTITATIVE = "quantitative"      # a number: accuracy, p95 latency, $/run
-    QUALITATIVE = "qualitative"        # a judged quality: tone, faithfulness
+    QUANTITATIVE = "quantitative"  # a number: accuracy, p95 latency, $/run
+    QUALITATIVE = "qualitative"  # a judged quality: tone, faithfulness
 
 
 class Measurement(str, Enum):
     """How a KPI can actually be computed."""
 
-    PROGRAMMATIC = "programmatic"      # exact match, regex, schema validation
-    EXECUTION = "execution"            # run the output, see if it passes tests
-    LLM_JUDGE = "llm_judge"            # model grades against a rubric
+    PROGRAMMATIC = "programmatic"  # exact match, regex, schema validation
+    EXECUTION = "execution"  # run the output, see if it passes tests
+    LLM_JUDGE = "llm_judge"  # model grades against a rubric
     HUMAN_REVIEW = "human_review"
-    TELEMETRY = "telemetry"            # latency/cost read from logs or usage
+    TELEMETRY = "telemetry"  # latency/cost read from logs or usage
     UNKNOWN = "unknown"
 
 
@@ -71,14 +71,14 @@ class Direction(str, Enum):
 
 
 class Priority(str, Enum):
-    PRIMARY = "primary"                # the KPI the task succeeds or fails on
+    PRIMARY = "primary"  # the KPI the task succeeds or fails on
     SECONDARY = "secondary"
-    GUARDRAIL = "guardrail"            # must not regress, not being optimized
+    GUARDRAIL = "guardrail"  # must not regress, not being optimized
 
 
 class Provenance(str, Enum):
-    STATED = "stated"                  # the user said it
-    INFERRED = "inferred"              # the classifier proposed it
+    STATED = "stated"  # the user said it
+    INFERRED = "inferred"  # the classifier proposed it
 
 
 class EvidenceKind(str, Enum):
@@ -86,14 +86,14 @@ class EvidenceKind(str, Enum):
     SUCCESSFUL_RUN = "successful_run"  # a golden trace / known-good output
     FAILURE_CASE = "failure_case"
     DATASET = "dataset"
-    SPEC = "spec"                      # requirements, acceptance criteria
+    SPEC = "spec"  # requirements, acceptance criteria
     CODE = "code"
     EXISTING_EVAL = "existing_eval"
     OTHER = "other"
 
 
 class EvidenceStatus(str, Enum):
-    PROVIDED = "provided"                        # we have it in hand
+    PROVIDED = "provided"  # we have it in hand
     MENTIONED_NOT_PROVIDED = "mentioned_not_provided"  # referenced, not attached
     ABSENT = "absent"
 
@@ -128,9 +128,12 @@ class KPI(BaseModel):
     )
     measurement: Measurement = Field(description="How this would actually be computed.")
     direction: Direction
-    unit: Optional[str] = Field(default=None, description="e.g. %, ms, USD, 1-5 rating.")
+    unit: Optional[str] = Field(
+        default=None, description="e.g. %, ms, USD, 1-5 rating."
+    )
     target: Optional[str] = Field(
-        default=None, description="Threshold or goal, verbatim from the user where given."
+        default=None,
+        description="Threshold or goal, verbatim from the user where given.",
     )
     baseline: Optional[str] = Field(
         default=None, description="Current value, if the user stated one."
@@ -166,7 +169,9 @@ class GroundTruth(BaseModel):
 class Question(BaseModel):
     """Something we need the user to answer before the spec is usable."""
 
-    field: str = Field(description="Dotted path into TaskSpec this would fill, e.g. 'kpis'.")
+    field: str = Field(
+        description="Dotted path into TaskSpec this would fill, e.g. 'kpis'."
+    )
     question: str
     why: str = Field(description="What we cannot do until this is answered.")
     blocking: bool = Field(
@@ -184,8 +189,8 @@ class Confidence(BaseModel):
 
 
 class Readiness(str, Enum):
-    READY = "ready"                # enough to start building an eval
-    NEEDS_INPUT = "needs_input"    # usable shape, non-blocking holes
+    READY = "ready"  # enough to start building an eval
+    NEEDS_INPUT = "needs_input"  # usable shape, non-blocking holes
     INSUFFICIENT = "insufficient"  # blocking holes; do not proceed
 
 
@@ -213,6 +218,7 @@ class TaskSpec(BaseModel):
 
 
 __all__ = [
+    "KPI",
     "Confidence",
     "Direction",
     "EvalType",
@@ -220,7 +226,6 @@ __all__ = [
     "EvidenceKind",
     "EvidenceStatus",
     "GroundTruth",
-    "KPI",
     "Measurement",
     "MetricKind",
     "Priority",

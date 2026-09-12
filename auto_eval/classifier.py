@@ -88,7 +88,9 @@ def classify(
     choice = completion.choices[0]
 
     if getattr(choice.message, "refusal", None):
-        raise ClassifierError(f"The model declined to classify this: {choice.message.refusal}")
+        raise ClassifierError(
+            f"The model declined to classify this: {choice.message.refusal}"
+        )
 
     spec = choice.message.parsed
     if spec is None:

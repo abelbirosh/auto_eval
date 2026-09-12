@@ -167,9 +167,7 @@ def rule_questions(spec: TaskSpec) -> List[Question]:
 
     # --- documentation and successful runs -----------------------------------
     usable = {
-        item.kind
-        for item in spec.evidence
-        if item.status is not EvidenceStatus.ABSENT
+        item.kind for item in spec.evidence if item.status is not EvidenceStatus.ABSENT
     }
 
     if EvidenceKind.DOCUMENTATION not in usable and EvidenceKind.SPEC not in usable:
@@ -235,7 +233,9 @@ def rule_questions(spec: TaskSpec) -> List[Question]:
     return out
 
 
-def merge_questions(model_questions: List[Question], rules: List[Question]) -> List[Question]:
+def merge_questions(
+    model_questions: List[Question], rules: List[Question]
+) -> List[Question]:
     """Rule questions win; model questions survive when they ask something new."""
     merged: List[Question] = []
     for question in rules:

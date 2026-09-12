@@ -25,4 +25,7 @@ def test_classify_parser_defaults():
 
 
 def test_model_flag_overrides():
-    assert build_parser().parse_args(["classify", "x", "--model", "gpt-4o-mini"]).model == "gpt-4o-mini"
+    assert (
+        build_parser().parse_args(["classify", "x", "--model", "gpt-4o-mini"]).model
+        == "gpt-4o-mini"
+    )

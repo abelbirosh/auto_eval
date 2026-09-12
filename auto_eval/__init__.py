@@ -9,8 +9,8 @@ from .schema import TaskSpec
 __version__ = "0.1.0"
 
 __all__ = [
-    "ClassifierError",
     "DEFAULT_MODEL",
+    "ClassifierError",
     "Settings",
     "TaskSpec",
     "analyze",

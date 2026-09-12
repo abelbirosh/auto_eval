@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "auto-eval"
 version = "0.1.0"
 description = "Turn a free-form request into a structured evaluation task spec."
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "openai>=1.40",
@@ -14,7 +15,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "httpx>=0.27"]
+dev = ["pytest>=7", "httpx>=0.27", "ruff>=0.6", "mypy>=1.11"]
 web = ["fastapi>=0.110", "uvicorn>=0.27"]
 
 [project.scripts]
@@ -28,3 +29,46 @@ auto_eval = ["static/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Surface a mistyped marker or fixture as an error instead of a silent skip.
+addopts = "-ra --strict-markers --strict-config"
+filterwarnings = ["error", "default::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # import sorting
+    "B",    # bugbear - likely bugs, not style
+    "C4",   # comprehension rewrites
+    "SIM",  # simplifications
+    "RUF",  # ruff's own checks
+]
+ignore = [
+    # The formatter wraps code; what is left over the limit is prose inside
+    # string literals, where a hard break would hurt more than it helps.
+    "E501",
+    # The stopword list is written as prose and split at import time; exploding
+    # it into a hundred-element list literal would only make it harder to edit.
+    "SIM905",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["auto_eval"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["auto_eval"]
+check_untyped_defs = true
+disallow_incomplete_defs = true
+no_implicit_optional = true
+strict_equality = true
+warn_redundant_casts = true
+warn_unused_configs = true
+warn_unused_ignores = true
+# openai and pydantic ship types; fastapi is only installed with the web extra.
+ignore_missing_imports = true

@@ -3,11 +3,12 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("httpx")
 
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
-import auto_eval.web as web  # noqa: E402
-from auto_eval.classifier import ClassifierError  # noqa: E402
-from auto_eval.gaps import analyze  # noqa: E402
+import auto_eval.web as web
+from auto_eval.classifier import ClassifierError
+from auto_eval.config import Settings
+from auto_eval.gaps import analyze
 
 
 @pytest.fixture
@@ -24,7 +25,9 @@ def test_index_serves_the_page(client):
 
 def test_health_reports_key_and_model(client, monkeypatch):
     monkeypatch.setattr(
-        web, "get_settings", lambda **kw: web.Settings(api_key="k", model="m", base_url=None)
+        web,
+        "get_settings",
+        lambda **kw: Settings(api_key="k", model="m", base_url=None),
     )
     body = client.get("/api/health").json()
     assert body == {"has_key": True, "model": "m"}
