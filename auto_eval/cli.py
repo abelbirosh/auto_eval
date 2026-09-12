@@ -55,6 +55,13 @@ def _cmd_classify(args: argparse.Namespace) -> int:
     return EXIT_INSUFFICIENT if spec.readiness is Readiness.INSUFFICIENT else EXIT_OK
 
 
+def _cmd_serve(args: argparse.Namespace) -> int:
+    from .web import serve
+
+    serve(host=args.host, port=args.port, reload=args.reload)
+    return EXIT_OK
+
+
 def _cmd_models(args: argparse.Namespace) -> int:
     settings = get_settings()
     for model_id in list_models():
@@ -109,6 +116,18 @@ def build_parser() -> argparse.ArgumentParser:
     classify_cmd.add_argument("--json", metavar="PATH", help="Also write the spec as JSON.")
     classify_cmd.add_argument("--md", metavar="PATH", help="Also write the task document.")
     classify_cmd.set_defaults(func=_cmd_classify)
+
+    serve_cmd = sub.add_parser(
+        "serve",
+        help="Run the local web UI.",
+        description="Local only - the UI has no authentication.",
+    )
+    serve_cmd.add_argument("--host", default="127.0.0.1", help="Bind address.")
+    serve_cmd.add_argument("--port", type=int, default=8000, help="Port.")
+    serve_cmd.add_argument(
+        "--reload", action="store_true", help="Restart on code changes."
+    )
+    serve_cmd.set_defaults(func=_cmd_serve)
 
     models_cmd = sub.add_parser(
         "models", help="List model IDs this API key can reach."

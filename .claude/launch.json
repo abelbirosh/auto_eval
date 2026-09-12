@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "auto-eval-ui",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "auto_eval.cli", "serve", "--port", "8111"],
+      "port": 8111
+    }
+  ]
+}

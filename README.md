@@ -37,7 +37,29 @@ file, so a shell export still works if you prefer that. Two optional settings
 live there too: `AUTO_EVAL_MODEL` to change the model, and `AUTO_EVAL_BASE_URL`
 to point at an OpenAI-compatible endpoint.
 
-## Use
+## The web UI
+
+The quickest way to try it. Install the extra and start the server:
+
+```bash
+pip install -e ".[web]"
+```
+
+```bash
+auto-eval serve
+```
+
+Then open <http://127.0.0.1:8000>. Paste a request, hit **Classify** (or
+&#8984;&#8617;), and you get the readiness verdict, the KPI table, the evidence,
+and the open questions, with the task document and raw JSON collapsed underneath.
+**Load example** fills the box with a realistic request if you just want to see
+it work.
+
+It binds to localhost and has no authentication — it's a test harness for your
+own machine, not something to expose. Your key stays in `.env` and is only ever
+read server-side.
+
+## Use from the command line
 
 ```bash
 auto-eval classify -f examples/request.txt
@@ -99,6 +121,8 @@ the classifier is classified, not obeyed.
 | [auto_eval/gaps.py](auto_eval/gaps.py) | Rule-based gap analysis and the readiness verdict. |
 | [auto_eval/render.py](auto_eval/render.py) | `TaskSpec` → task document. |
 | [auto_eval/cli.py](auto_eval/cli.py) | The `auto-eval` command. |
+| [auto_eval/web.py](auto_eval/web.py) | FastAPI app behind the web UI. |
+| [auto_eval/static/index.html](auto_eval/static/index.html) | The UI itself — one file, no build step. |
 | [docs/task-spec.md](docs/task-spec.md) | Field-by-field reference for the spec. |
 
 ## Tests
@@ -107,5 +131,5 @@ the classifier is classified, not obeyed.
 pytest
 ```
 
-The suite runs offline — the classifier test drives a fake client, and the gap
-and render layers are pure functions.
+The suite runs offline — the classifier and web tests drive fakes, and the gap
+and render layers are pure functions. No test spends money.
