@@ -134,10 +134,28 @@
   section > p, details p, .q > div:first-child { max-width: 62ch; }
   li::marker { color: var(--rule-2); }
 
+
   /* The facts block reads as a stamped record, not a table. */
   table.facts { margin-top: 14px; }
   table.facts th { width: 104px; font-size: 11px; letter-spacing: .14em; padding-top: 5px; }
   table.facts td, table.facts th { border-bottom: 0; padding: 4px 16px 4px 0; }
+
+  /* The board form: items and systems, pasted in. Monospace because the field
+     holds one identifier per line, not prose. */
+  #b-items, #b-cohort {
+    min-height: 0; margin-top: 8px; padding: 10px 12px; font-size: 12.5px;
+    font-family: var(--mono); line-height: 1.55; width: 100%;
+    background: var(--ground); color: var(--ink);
+    border: 1px solid var(--rule-2); border-radius: 0; resize: vertical;
+  }
+  #b-items:focus, #b-cohort:focus { outline: 0; border-color: var(--ink); }
+  input[type=text] {
+    font: inherit; font-size: 13px; font-family: var(--mono); color: var(--ink);
+    background: transparent; border: 0; border-bottom: 1px solid var(--rule-2);
+    padding: 3px 0; border-radius: 0;
+  }
+  input[type=text]:focus { outline: 0; border-bottom-color: var(--ink); }
+
   .sep { color: var(--rule-2); }
 
   /* ── Open questions ────────────────────────────────────────────────────
@@ -231,6 +249,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c =>
   ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 const dash = (v) => v ? esc(v) : '<span class="none">not stated</span>';
+const words = (s) => esc(String(s ?? "").replace(/_/g, " "));
 
 const EXAMPLE = `We've got a support bot that handles billing questions in our chat widget. It's an agent with a few tools (lookup_account, list_invoices, issue_refund). Customers complain it sounds robotic and it occasionally quotes the wrong refund window. I want to know if it's actually getting the policy right before we roll it out to the EU. Our billing policy lives in Notion. Ideally it'd be right at least 90% of the time. We've got about six months of chat transcripts.`;
 
@@ -659,20 +678,93 @@ async function runAnalyze() {
 // rule, and then every case is run. So it is one button, with the four things
 // worth deciding next to it.
 
+// Two shapes of subject, two shapes of benchmark. An agent has a trajectory, so
+// it gets a suite of cases and is scored on what it did. An endpoint or a model
+// has no trajectory: what you want to know is which of several systems answers
+// the same questions best, which is a board.
+const AGENTIC = ["agent", "workflow"];
+const isAgentic = () => lastSpec && AGENTIC.includes(lastSpec.subject.kind);
+
+function starterCohort() {
+  const model = (healthState && healthState.subject_model) || "gpt-5-mini";
+  return JSON.stringify({
+    name: (lastSpec && lastSpec.subject.name ? lastSpec.subject.name : "cohort")
+      .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
+    task: lastSpec && lastSpec.subject.in_scope && lastSpec.subject.in_scope.length
+      ? lastSpec.subject.in_scope[0] : "factual lookup",
+    model,
+    systems: [{
+      label: "Vendor A",
+      vendor: "Vendor A",
+      kind: "search_api",
+      configuration: "POST /search",
+      endpoint: {
+        method: "POST",
+        url: "https://api.vendor-a.example/search",
+        headers: { "x-api-key": "${VENDOR_A_API_KEY}" },
+        body: { query: "{query}", numResults: 10 },
+        results_path: "results",
+        fields: { title: "title", url: "url", snippet: "text" }
+      },
+      price: { per_call_usd: 0.005, note: "$5 / 1k", source: "https://vendor-a.example/pricing" }
+    }]
+  }, null, 2);
+}
+
 function benchmarkForm() {
+  if (isAgentic()) {
+    return `<h2>Benchmark</h2>
+      <p class="why">Writes the suite for this spec &mdash; offline, deterministic, same spec
+        same suite &mdash; then runs every case against the provider and scores it.</p>
+      <div class="row">
+        <label>samples <input type="number" id="b-samples" min="1" max="10" placeholder="auto"></label>
+        <label>first N cases <input type="number" id="b-limit" min="1" placeholder="all"></label>
+        <label>split <select id="b-split">
+          <option value="">all</option><option value="held_out">held out</option><option value="dev">dev</option>
+        </select></label>
+        <label><input type="checkbox" id="b-mock"> dry run (no provider call)</label>
+      </div>
+      <div class="row">
+        <button class="primary" id="test">Run the benchmark</button>
+        <span class="hint" id="test-hint"></span>
+      </div>`;
+  }
+
+  const datasets = lastReport
+    ? lastReport.sources.filter(s => s.kind === "dataset" || s.kind === "benchmark")
+    : [];
+
   return `<h2>Benchmark</h2>
-    <p class="why">Writes the suite for this spec &mdash; offline, deterministic, same spec
-      same suite &mdash; then runs every case against the provider and scores it.</p>
+    <p class="why">A <strong>${esc(lastSpec.subject.kind.replace(/_/g, " "))}</strong> has no trajectory to
+      score, so this is a board: the same items put to every system, one row each, with a
+      model-only row to show the answers could not simply be recalled.</p>
+
+    <table class="facts">
+      <tr><th>Items</th><td>One JSON object per line, each with a question and the answers that
+        count. A date on each item is what makes the contamination check work.
+        ${datasets.length ? `<br><span class="why">From the search above: ${
+          datasets.map(d => link(d.url, d.name)).join(", ")} &mdash; fetch what you need and paste the rows here.</span>` : ""}</td></tr>
+      <tr><th>Systems</th><td>One row per vendor and configuration. Keys are read from the
+        environment as <code>\${VENDOR_API_KEY}</code> and never stored here; a row whose key is
+        missing is reported as not run rather than scored as bad.</td></tr>
+    </table>
+
+    <h3>Items</h3>
+    <textarea id="b-items" rows="5" placeholder='{"id": "1", "query": "Which company did Acme acquire in June 2026?", "answers": ["Bolt Systems"], "published": "2026-06-04"}'></textarea>
     <div class="row">
-      <label>samples <input type="number" id="b-samples" min="1" max="10" placeholder="auto"></label>
-      <label>first N cases <input type="number" id="b-limit" min="1" placeholder="all"></label>
-      <label>split <select id="b-split">
-        <option value="">all</option><option value="held_out">held out</option><option value="dev">dev</option>
-      </select></label>
-      <label><input type="checkbox" id="b-mock"> dry run (no provider call)</label>
+      <label>or a file <input type="text" id="b-items-path" placeholder="examples/dataset-company-news.jsonl" style="width:280px"></label>
+      <label>first N items <input type="number" id="b-limit" min="1" placeholder="all"></label>
     </div>
+
+    <h3>Systems</h3>
+    <textarea id="b-cohort" rows="8" spellcheck="false">${esc(starterCohort())}</textarea>
     <div class="row">
-      <button class="primary" id="test">Run the benchmark</button>
+      <label>or a file <input type="text" id="b-cohort-path" placeholder="examples/cohort-web-search.json" style="width:280px"></label>
+      <label><input type="checkbox" id="b-baseline" checked> add the model-only row</label>
+    </div>
+
+    <div class="row">
+      <button class="primary" id="test">Run the board</button>
       <span class="hint" id="test-hint"></span>
     </div>`;
 }
@@ -680,11 +772,131 @@ function benchmarkForm() {
 function wireBenchmark() {
   const btn = $("test");
   if (!btn) return;
-  btn.onclick = () => benchmark(false);
+  btn.onclick = () => (isAgentic() ? benchmark(false) : board());
   if (healthState && healthState.has_key === false) {
     const mock = $("b-mock");
     if (mock) mock.checked = true;
   }
+}
+
+async function board() {
+  const btn = $("test");
+  const hint = $("test-hint");
+  btn.disabled = true;
+  btn.textContent = "Starting\u2026";
+  banner("", "");
+
+  const body = {
+    cohort: $("b-cohort").value.trim() || null,
+    cohort_path: $("b-cohort-path").value.trim() || null,
+    dataset: $("b-items").value.trim() || null,
+    dataset_path: $("b-items-path").value.trim() || null,
+    dataset_name: (lastSpec && lastSpec.subject.name) || "items",
+    limit: $("b-limit").value ? Number($("b-limit").value) : null,
+    baseline: $("b-baseline").checked,
+  };
+
+  try {
+    const r = await fetch("/api/board", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const job = await r.json();
+    if (!r.ok) { banner("err", job.detail || `Could not start (${r.status})`); return; }
+    hint.textContent = `${job.systems} system(s) x ${job.cases} item(s) \u2014 starting\u2026`;
+    await pollBoard(job);
+  } catch (e) {
+    banner("err", `Could not reach the server: ${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Run the board";
+  }
+}
+
+async function pollBoard(job) {
+  const hint = $("test-hint");
+  while (true) {
+    const r = await fetch(`/api/run/${job.job_id}`);
+    const now = await r.json();
+    if (!r.ok) { banner("err", now.detail || "Lost track of the board."); return; }
+    if (now.state === "running") {
+      hint.textContent = `${now.done} of ${now.total} call(s)` + (now.case_id ? ` \u2014 ${now.case_id}` : "");
+      await new Promise(done => setTimeout(done, 900));
+      continue;
+    }
+    if (now.state === "failed") {
+      hint.textContent = "";
+      banner("err", `The board failed: ${now.error}`);
+      return;
+    }
+    hint.textContent = `written to ${now.path}`;
+    const built = await fetch(`/api/boards/${encodeURIComponent(now.board_id)}`).then(x => x.json());
+    renderBoardResult(built);
+    $("runresult").scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+}
+
+const secs = (v) => v === null || v === undefined ? "&mdash;" : (v < 1 ? `${Math.round(v * 1000)}ms` : `${v.toFixed(2)}s`);
+const usd = (v) => v === null || v === undefined ? "&mdash;" : `$${v.toFixed(4)}`;
+
+function renderBoardResult(b) {
+  const shown = b.rows.filter(r => !r.skipped);
+  const skipped = b.rows.filter(r => r.skipped);
+  const baseline = b.rows.find(r => r.kind === "model_only");
+  const leader = shown.filter(r => r.kind !== "model_only" && r.accuracy !== null)
+    .sort((x, y) => y.accuracy - x.accuracy)[0];
+
+  const rows = table(
+    ["System", "Endpoint &amp; configuration", "Accuracy", "AR@1", "AR@5", "p50", "p95", "Errors", "Total $", "$ / 1k correct"],
+    shown.map(r => [
+      esc(r.label) + (r.vendor && r.vendor !== r.label ? `<br><span class="why">${esc(r.vendor)}</span>` : ""),
+      `<span class="why">${esc(r.configuration || "—")}</span>`,
+      pct(r.accuracy), pct(r.recall_at_1), pct(r.recall_at_5),
+      secs(r.seconds_p50), secs(r.seconds_p95), r.errors,
+      usd(r.usd), usd(r.usd_per_1k_correct),
+    ]));
+
+  const notRun = skipped.length
+    ? table(["System", "Why not"], skipped.map(r => [esc(r.label), `<span class="why">${esc(r.skipped)}</span>`]))
+    : "";
+
+  const c = b.contamination;
+  const perItem = shown.map(r => `<details><summary>${esc(r.label)} — every item</summary>${
+    table(["Item", "Right", "Rank", "Evidence"], r.verdicts.map(v => [
+      esc(v.item_id),
+      v.error ? '<span class="badge error">error</span>' : (v.correct ? '<span class="badge passed">yes</span>' : '<span class="badge failed">no</span>'),
+      v.rank === null || v.rank === undefined ? "&mdash;" : v.rank,
+      `<span class="why">${esc(v.error || v.evidence || v.note || "—")}</span>`]))}</details>`).join("");
+
+  $("runresult").innerHTML = `
+    <div class="verdict">
+      <span class="badge ${leader ? "labelled_data" : "none_found"}">${leader ? pct(leader.accuracy) + " " + esc(leader.label) : "nothing scored"}</span>
+      <strong>${esc(b.task || "Comparison")}: ${esc(b.dataset)}</strong>
+      <span class="meta">${esc(b.board_id)}</span>
+    </div>
+    <table class="facts">
+      <tr><th>Items</th><td>${b.items} &middot; <code>${esc(b.dataset_digest)}</code>${
+        b.dataset_source ? ` &middot; ${esc(b.dataset_source)}` : ""}</td></tr>
+      <tr><th>Held constant</th><td>model <code>${esc(b.model || "none")}</code>,
+        judge <code>${esc(b.judge_model || "none")}</code> &mdash; only the system changes between rows</td></tr>
+      <tr><th>Model only</th><td>${baseline && baseline.accuracy !== null
+        ? `${pct(baseline.accuracy)} with no endpoint at all${baseline.accuracy > 0.1
+            ? " &mdash; that much of this board is a memory test" : " &mdash; the answers cannot be recalled"}`
+        : '<span class="none">not measured</span>'}</td></tr>
+      ${c ? `<tr><th>Contamination</th><td>${words(c.verdict)} &middot; ${c.clean_cases} clean,
+        ${c.unknown_cases} unknown, ${c.at_risk_cases} at risk${c.cutoff ? ` &middot; cutoff ${esc(c.cutoff)}` : ""}</td></tr>` : ""}
+    </table>
+
+    ${b.warnings.length ? `<details open><summary>${b.warnings.length} thing(s) to read before quoting a number</summary>${list(b.warnings, "")}</details>` : ""}
+
+    <h2>The board <span class="why">alphabetical; no column decides the order</span></h2>${rows}
+    ${notRun ? `<h2>Not run</h2>${notRun}` : ""}
+    <details><summary>How it was measured</summary>${list(b.methodology, "not recorded")}</details>
+    ${perItem}
+    <details><summary>Board (JSON)</summary><pre>${esc(JSON.stringify(b, null, 2))}</pre></details>`;
+  $("runresult").hidden = false;
 }
 
 async function benchmark(force) {

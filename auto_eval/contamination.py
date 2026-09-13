@@ -38,7 +38,8 @@ from pydantic import BaseModel, Field
 
 from .schema import TaskSpec
 
-if TYPE_CHECKING:  # imported for the annotation only, to keep the layering
+if TYPE_CHECKING:  # imported for the annotations only, to keep the layering
+    from .dataset import Dataset
     from .suite import Suite
 
 
@@ -495,6 +496,97 @@ def for_suite(
     return report
 
 
+def for_dataset(
+    dataset: "Dataset", model: str, *, cutoff: Optional[Cutoff] = None
+) -> ContaminationReport:
+    """Assess a board's items against what `model` may already have seen.
+
+    An item carries the date its fact became public. Items after the cutoff are
+    what a retrieval board should be made of; items before it are answerable
+    from memory, and the board's model-only row is the direct measurement of how
+    many of them are.
+    """
+    resolved = cutoff or cutoff_for(model)
+    report = ContaminationReport(
+        model=model,
+        cutoff=resolved.cutoff if resolved else None,
+        cutoff_source=resolved.source if resolved else None,
+    )
+    if resolved is None:
+        report.warnings.append(CUTOFF_HELP)
+
+    dated = [(item, item.published) for item in dataset.items if item.published]
+    undated = len(dataset.items) - len(dated)
+    line = resolved.cutoff if resolved else None
+    after = [(item, when) for item, when in dated if line and when > line]
+    before = [(item, when) for item, when in dated if line and when <= line]
+
+    if after:
+        report.by_origin.append(
+            SourceRisk(
+                source=f"{dataset.name}: published after the cutoff",
+                url=dataset.source
+                if (dataset.source or "").startswith("http")
+                else None,
+                verdict=Freshness.POST_CUTOFF,
+                cases=len(after),
+                why=(
+                    f"Dated between {min(when for _, when in after)} and "
+                    f"{max(when for _, when in after)}, after {line}. "
+                    "These are the items a retrieval board is made of."
+                ),
+            )
+        )
+    if before:
+        report.by_origin.append(
+            SourceRisk(
+                source=f"{dataset.name}: published before the cutoff",
+                verdict=Freshness.PRE_CUTOFF,
+                cases=len(before),
+                why=(
+                    "Inside the training window, so the model may answer them without "
+                    "retrieving anything. The model-only row measures exactly this."
+                ),
+            )
+        )
+    if undated or (dated and resolved is None):
+        report.by_origin.append(
+            SourceRisk(
+                source=f"{dataset.name}: no usable date",
+                verdict=Freshness.UNKNOWN,
+                cases=undated if resolved else len(dataset.items),
+                why=(
+                    "No publication date on the item, or no cutoff on file for this model, so "
+                    "nothing can be said about whether the answer was already known."
+                ),
+            )
+        )
+
+    for risk in report.by_origin:
+        if risk.verdict in CLEAN:
+            report.clean_cases += risk.cases
+        elif risk.verdict is Freshness.UNKNOWN:
+            report.unknown_cases += risk.cases
+        else:
+            report.at_risk_cases += risk.cases
+
+    report.verdict = (
+        min((risk.verdict for risk in report.by_origin), key=SEVERITY.index)
+        if report.by_origin
+        else Freshness.UNKNOWN
+    )
+    if report.at_risk_cases:
+        report.warnings.append(
+            f"{report.at_risk_cases} of {len(dataset.items)} items predate {report.cutoff}, the "
+            f"cutoff for {model}. Read the model-only row before reading any other."
+        )
+    if resolved is not None:
+        report.notes.append(
+            f"Cutoff for {model} read as {resolved.cutoff} from {resolved.source} on {resolved.read_on}."
+        )
+    return report
+
+
 def parse_cutoff(model: str, value: str) -> Cutoff:
     """A cutoff the user supplied on the command line."""
     return Cutoff(
@@ -523,6 +615,7 @@ __all__ = [
     "Freshness",
     "SourceRisk",
     "cutoff_for",
+    "for_dataset",
     "for_suite",
     "fresh_by_verdict",
     "matching",

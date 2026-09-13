@@ -16,13 +16,29 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from .analysis import AnalysisReport, analyze_sources
+from .board import (
+    Board,
+    BoardError,
+    BoardIndexEntry,
+    load_board,
+    run_board,
+    write_board,
+)
+from .board import list_boards as list_board_dirs
 from .classifier import DEFAULT_MAX_TOKENS, ClassifierError, classify
+from .cohort import Cohort, CohortError
+from .cohort import load as load_cohort
+from .cohort import parse as parse_cohort
 from .config import Settings, get_settings
 from .contamination import parse_cutoff
+from .dataset import Dataset, DatasetError
+from .dataset import load as load_dataset
+from .dataset import parse as parse_dataset
 from .gaps import analyze
 from .ground_truth import GroundTruthReport, gate, identify
 from .render import (
     render_analysis,
+    render_board,
     render_ground_truth,
     render_markdown,
     render_run,
@@ -148,6 +164,26 @@ class BenchmarkRequest(RunOptions):
     suites_dir: Optional[str] = None
 
 
+class BoardRequest(BaseModel):
+    """Run a comparison board: the same items put to every system in a cohort."""
+
+    cohort: Optional[str] = Field(default=None, description="The cohort as JSON text.")
+    cohort_path: Optional[str] = Field(default=None, description="Or a path to it.")
+    dataset: Optional[str] = Field(
+        default=None, description="The items as JSONL or JSON text."
+    )
+    dataset_path: Optional[str] = Field(default=None, description="Or a path to them.")
+    dataset_name: str = "items"
+    task: Optional[str] = None
+    model: Optional[str] = None
+    judge_model: Optional[str] = None
+    limit: Optional[int] = None
+    concurrency: int = 4
+    baseline: bool = True
+    cutoff: Optional[str] = None
+    out: Optional[str] = None
+
+
 class Job(BaseModel):
     """A run in flight. Polled by the page while it works."""
 
@@ -169,6 +205,9 @@ class Job(BaseModel):
     cases: int = 0
     held_out: int = 0
     suite_warnings: List[str] = Field(default_factory=list)
+    # Filled when the job is a board rather than a suite run.
+    board_id: Optional[str] = None
+    systems: int = 0
 
 
 # Jobs live in this process only: the UI is a local harness, and a run that was
@@ -248,6 +287,79 @@ def launch(
 
     threading.Thread(
         target=work, name=f"auto-eval-run-{job.job_id}", daemon=True
+    ).start()
+    return job
+
+
+def _boards_dir(override: Optional[str] = None) -> Path:
+    """Boards live next to runs unless told otherwise."""
+    return (
+        Path(override)
+        if override
+        else get_settings().effective_runs_dir.parent / "boards"
+    )
+
+
+def launch_board(
+    dataset: Dataset,
+    cohort: Cohort,
+    request: "BoardRequest",
+    settings: Settings,
+) -> Job:
+    """Start a board in the background and hand back a job to poll."""
+    items = len(dataset.sample(request.limit))
+    systems = len(cohort.systems) + (
+        0 if cohort.baseline or not request.baseline else 1
+    )
+
+    job = Job(
+        job_id=uuid.uuid4().hex[:12],
+        suite=dataset.name,
+        model=request.model or cohort.model or settings.effective_subject_model,
+        total=items * systems,
+        cases=items,
+        systems=systems,
+    )
+    with _JOBS_LOCK:
+        _JOBS[job.job_id] = job
+
+    done = {"count": 0}
+
+    def progress(_done: int, _total: int, label: str) -> None:
+        # Each row reports its own items, so the page is shown the running total
+        # across the whole board rather than a bar that restarts per system.
+        done["count"] += 1
+        _set(job.job_id, done=done["count"], case_id=label)
+
+    def work() -> None:
+        try:
+            board = run_board(
+                dataset,
+                cohort,
+                model=request.model,
+                judge_model=request.judge_model,
+                limit=request.limit,
+                concurrency=request.concurrency,
+                cutoff=parse_cutoff(job.model, request.cutoff)
+                if request.cutoff
+                else None,
+                baseline=request.baseline,
+                progress=progress,
+                settings=settings,
+            )
+            target = write_board(board, _boards_dir(request.out))
+            _set(
+                job.job_id,
+                state="done",
+                board_id=board.board_id,
+                path=str(target),
+                done=job.total,
+            )
+        except Exception as exc:  # surfaced to the page, not swallowed
+            _set(job.job_id, state="failed", error=str(exc))
+
+    threading.Thread(
+        target=work, name=f"auto-eval-board-{job.job_id}", daemon=True
     ).start()
     return job
 
@@ -408,6 +520,79 @@ def create_app():
             ) from exc
         return launch(suite, request, settings, source=str(target))
 
+    @app.post("/api/board", response_model=Job)
+    def start_board_endpoint(request: BoardRequest) -> Job:
+        """Run every system in a cohort over the same items.
+
+        This is the shape for a subject that has no trajectory - an endpoint, a
+        model, a retrieval API. Nothing is authored: the items carry their own
+        answers, so the only question is which system finds them.
+        """
+        settings = get_settings()
+        try:
+            if request.dataset_path:
+                dataset = load_dataset(Path(request.dataset_path))
+            elif request.dataset:
+                dataset = parse_dataset(
+                    request.dataset,
+                    name=request.dataset_name,
+                    task=request.task or "factual lookup",
+                )
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No items. Paste them as JSONL, or point at a file.",
+                )
+            cohort = (
+                load_cohort(Path(request.cohort_path))
+                if request.cohort_path
+                else parse_cohort(request.cohort or "")
+            )
+        except (DatasetError, CohortError, OSError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        needs_model = request.baseline or any(s.calls_a_model for s in cohort.systems)
+        if needs_model and not settings.has_key:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Rows that use a model need an API key. Put OPENAI_API_KEY in your .env, "
+                    "or untick the model-only baseline and compare endpoints alone."
+                ),
+            )
+
+        ready, blocked = cohort.runnable()
+        if not ready and not request.baseline:
+            raise HTTPException(
+                status_code=400,
+                detail="No system can be run: " + "; ".join(why for _, why in blocked),
+            )
+        return launch_board(dataset, cohort, request, settings)
+
+    @app.get("/api/boards", response_model=List[BoardIndexEntry])
+    def boards_endpoint(dir: Optional[str] = None) -> List[BoardIndexEntry]:
+        return list_board_dirs(_boards_dir(dir))
+
+    @app.get("/api/boards/{board_id}", response_model=Board)
+    def board_endpoint(board_id: str, dir: Optional[str] = None) -> Board:
+        if not SAFE_ID.match(board_id):
+            raise HTTPException(status_code=400, detail="That is not a board id.")
+        try:
+            return load_board(_boards_dir(dir) / board_id)
+        except BoardError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/boards/{board_id}/markdown")
+    def board_markdown_endpoint(
+        board_id: str, dir: Optional[str] = None
+    ) -> Dict[str, str]:
+        if not SAFE_ID.match(board_id):
+            raise HTTPException(status_code=400, detail="That is not a board id.")
+        try:
+            return {"markdown": render_board(load_board(_boards_dir(dir) / board_id))}
+        except BoardError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.get("/api/run/{job_id}", response_model=Job)
     def job_endpoint(job_id: str) -> Job:
         with _JOBS_LOCK:
@@ -505,6 +690,7 @@ __all__ = [
     "AnalyzeRequest",
     "AnalyzeResponse",
     "BenchmarkRequest",
+    "BoardRequest",
     "ClassifyRequest",
     "ClassifyResponse",
     "GroundTruthRequest",
@@ -516,5 +702,6 @@ __all__ = [
     "create_app",
     "find_suites",
     "launch",
+    "launch_board",
     "serve",
 ]

@@ -7,6 +7,7 @@ from typing import List, Optional
 from .agent import AgentProfile, RunMode
 from .analysis import AnalysisReport, Reachability, Usability
 from .authoring import Case, CaseSource, needs_fixture
+from .board import Board, Row
 from .contamination import Cutoff, Freshness, FreshSource, fresh_by_verdict
 from .ground_truth import Availability, Coverage, Gate, GroundTruthReport
 from .runner import CaseStatus, Group, RunReport, Score, Tally
@@ -754,6 +755,159 @@ def render_run(report: RunReport) -> str:
     return "\n".join(lines)
 
 
+# --------------------------------------------------------------------------
+# A comparison board
+# --------------------------------------------------------------------------
+
+
+def _pct(value: Optional[float]) -> str:
+    return f"{value * 100:.1f}%" if value is not None else "—"
+
+
+def _usd(value: Optional[float]) -> str:
+    return f"${value:,.4f}" if value is not None else "—"
+
+
+def _secs(value: Optional[float]) -> str:
+    if value is None:
+        return "—"
+    return f"{value * 1000:.0f}ms" if value < 1 else f"{value:.2f}s"
+
+
+def _row(row: Row) -> str:
+    return (
+        f"| {row.label} | {row.configuration or '—'} | {_pct(row.accuracy)} | "
+        f"{_pct(row.recall_at_1)} | {_pct(row.recall_at_5)} | {_secs(row.seconds_p50)} | "
+        f"{_secs(row.seconds_p95)} | {row.errors} | {_usd(row.usd)} | "
+        f"{_usd(row.usd_per_1k_correct)} |"
+    )
+
+
+def render_board(board: Board) -> str:
+    """A board as a document: the rows, then everything that qualifies them."""
+    leader = board.leader()
+    baseline = board.baseline
+
+    lines: List[str] = [
+        f"# {board.task or 'Comparison'}: {board.dataset}",
+        "",
+        f"**Board:** `{board.board_id}`  ",
+        f"**Items:** {board.items} from `{board.dataset_digest}`"
+        + (f" ({board.dataset_source})" if board.dataset_source else "")
+        + "  ",
+        f"**Held constant:** model `{board.model or 'none'}`, judge `{board.judge_model or 'none'}`  ",
+        "**Model-only baseline:** "
+        + (
+            _pct(baseline.accuracy)
+            if baseline and baseline.accuracy is not None
+            else "_not measured_"
+        )
+        + "  ",
+        "**Leader:** "
+        + (
+            f"{leader.label} at {_pct(leader.accuracy)}"
+            if leader
+            else "_nothing scored_"
+        ),
+        "",
+    ]
+
+    if board.warnings:
+        lines += ["## Read this first", ""]
+        lines += [f"- {warning}" for warning in board.warnings]
+        lines.append("")
+
+    lines += [
+        "## The board",
+        "",
+        "Rows are alphabetical. No column decides the order.",
+        "",
+        "| System | Endpoint & configuration | Accuracy | AR@1 | AR@5 | p50 | p95 | Errors | Total $ | $ / 1k correct |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for row in board.rows:
+        if row.skipped is None:
+            lines.append(_row(row))
+    lines.append("")
+
+    skipped = [row for row in board.rows if row.skipped]
+    if skipped:
+        lines += ["### Not run", "", "| System | Why not |", "| --- | --- |"]
+        lines += [f"| {row.label} | {row.skipped} |" for row in skipped]
+        lines.append("")
+
+    priced = [row for row in board.rows if row.price_note or row.docs_url]
+    if priced:
+        lines += [
+            "### Prices, as published",
+            "",
+            "| System | List price | Source |",
+            "| --- | --- | --- |",
+        ]
+        for row in priced:
+            source = (
+                f"<{row.price_source}>"
+                if row.price_source
+                else (f"<{row.docs_url}>" if row.docs_url else "—")
+            )
+            lines.append(f"| {row.label} | {row.price_note or '—'} | {source} |")
+        lines.append("")
+
+    lines += [
+        "## How it was measured",
+        "",
+        *_bullets(board.methodology, "not recorded"),
+        "",
+    ]
+
+    if board.contamination:
+        contamination = board.contamination
+        lines += [
+            "## Contamination",
+            "",
+            f"**{contamination.verdict.value.replace('_', ' ')}** — "
+            f"{FRESHNESS_BLURB[contamination.verdict]}  ",
+            f"{contamination.clean_cases} item(s) the model cannot have seen, "
+            f"{contamination.unknown_cases} unknown, {contamination.at_risk_cases} at risk"
+            + (f", cutoff {contamination.cutoff}" if contamination.cutoff else "")
+            + "",
+            "",
+        ]
+        if contamination.by_origin:
+            lines += ["| Items | Verdict | Why |", "| --- | --- | --- |"]
+            for origin in contamination.by_origin:
+                lines.append(
+                    f"| {origin.cases} | {origin.verdict.value} | {origin.why} |"
+                )
+            lines.append("")
+
+    lines += [
+        "## Per item",
+        "",
+        "The first few, with the span each verdict was read off.",
+        "",
+    ]
+    for row in board.rows:
+        if row.skipped or not row.verdicts:
+            continue
+        lines += [
+            f"### {row.label}",
+            "",
+            "| Item | Right | Rank | Evidence |",
+            "| --- | --- | --- | --- |",
+        ]
+        for verdict in row.verdicts[:10]:
+            mark = "error" if verdict.error else ("yes" if verdict.correct else "no")
+            evidence = verdict.error or verdict.evidence or verdict.note or "—"
+            lines.append(
+                f"| {verdict.item_id} | {mark} | {verdict.rank or '—'} | {_preview(evidence)} |"
+            )
+        if len(row.verdicts) > 10:
+            lines.append(f"| … | | | {len(row.verdicts) - 10} more in the board JSON |")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def render_fresh(cutoff: Optional[Cutoff] = None) -> str:
     """The contamination-resistant catalogue, judged against one model's cutoff."""
     lines = [
@@ -830,6 +984,7 @@ def render_case(case: Case) -> str:
 
 __all__ = [
     "render_analysis",
+    "render_board",
     "render_case",
     "render_fresh",
     "render_ground_truth",

@@ -1,0 +1,75 @@
+{
+  "name": "search-only",
+  "task": "single-shot factual lookup",
+  "notes": [
+    "Single-shot only: every row is one HTTP call per item, with the question sent verbatim as the query. No model writes the query, reformulates it, or reads the results.",
+    "The model-only row is the control rather than a search row - one model call, no endpoint - and it is what shows the answers cannot simply be recalled.",
+    "Scored on whether a gold answer appears in the returned results, and at what rank."
+  ],
+  "systems": [
+    {
+      "label": "Exa auto",
+      "vendor": "Exa",
+      "kind": "search_api",
+      "configuration": "POST /search type=auto numResults=10, contents.highlights",
+      "docs_url": "https://docs.exa.ai/reference/search-api-guide-for-coding-agents",
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.exa.ai/search",
+        "headers": { "x-api-key": "${EXA_API_KEY}", "content-type": "application/json" },
+        "body": { "query": "{query}", "type": "auto", "numResults": 10, "contents": { "highlights": true } },
+        "results_path": "results",
+        "fields": { "title": "title", "url": "url", "snippet": "highlights" }
+      },
+      "price": { "per_call_usd": 0.007, "note": "$7 / 1k requests, up to 10 results", "source": "https://exa.ai/docs/reference/pricing" }
+    },
+    {
+      "label": "Exa fast",
+      "vendor": "Exa",
+      "kind": "search_api",
+      "configuration": "POST /search type=fast numResults=10, contents.highlights",
+      "docs_url": "https://docs.exa.ai/reference/search-api-guide-for-coding-agents",
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.exa.ai/search",
+        "headers": { "x-api-key": "${EXA_API_KEY}", "content-type": "application/json" },
+        "body": { "query": "{query}", "type": "fast", "numResults": 10, "contents": { "highlights": true } },
+        "results_path": "results",
+        "fields": { "title": "title", "url": "url", "snippet": "highlights" }
+      },
+      "price": { "per_call_usd": 0.007, "note": "$7 / 1k requests, up to 10 results", "source": "https://exa.ai/docs/reference/pricing" }
+    },
+    {
+      "label": "Firecrawl",
+      "vendor": "Firecrawl",
+      "kind": "search_api",
+      "configuration": "POST /v2/search limit=10",
+      "docs_url": "https://docs.firecrawl.dev/features/search",
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.firecrawl.dev/v2/search",
+        "headers": { "Authorization": "Bearer ${FIRECRAWL_API_KEY}", "content-type": "application/json" },
+        "body": { "query": "{query}", "limit": 10 },
+        "results_path": "data.web",
+        "fields": { "title": "title", "url": "url", "snippet": "description" }
+      },
+      "price": { "note": "2 credits per 10 results; priced in credits, so convert at your own plan's rate", "source": "https://www.firecrawl.dev/pricing" }
+    },
+    {
+      "label": "TinyFish",
+      "vendor": "TinyFish",
+      "kind": "search_api",
+      "configuration": "GET api.search.tinyfish.ai",
+      "docs_url": "https://api.search.tinyfish.ai",
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.search.tinyfish.ai/",
+        "headers": { "X-API-Key": "${TINYFISH_API_KEY}" },
+        "params": { "query": "{query}" },
+        "results_path": "results",
+        "fields": { "title": "title", "url": "url", "snippet": "snippet" }
+      },
+      "price": { "per_call_usd": 0.0, "note": "free, with a published rate cap" }
+    }
+  ]
+}

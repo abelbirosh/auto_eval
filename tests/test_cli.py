@@ -498,3 +498,96 @@ def test_fresh_says_when_it_has_no_cutoff_on_file(capsys):
     captured = capsys.readouterr()
     assert "No published cutoff on file" in captured.err
     assert "nothing is judged post-cutoff" in captured.out
+
+
+# --- boards ---------------------------------------------------------------
+
+
+def test_board_parser_requires_a_cohort():
+    args = build_parser().parse_args(["board", "items.jsonl", "-c", "cohort.json"])
+    assert args.dataset == "items.jsonl" and args.cohort == "cohort.json"
+    assert args.no_baseline is False  # the control is on by default
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["board", "items.jsonl"])
+
+
+def test_a_dataset_that_is_not_there_is_a_readable_error(tmp_path, capsys):
+    cohort = tmp_path / "c.json"
+    cohort.write_text('[{"label": "A", "kind": "model_only"}]', encoding="utf-8")
+    assert main(["board", str(tmp_path / "nope.jsonl"), "-c", str(cohort)]) == 1
+    assert "No dataset at" in capsys.readouterr().err
+
+
+def test_a_cohort_that_is_not_one_is_a_readable_error(tmp_path, capsys):
+    items = tmp_path / "i.jsonl"
+    items.write_text('{"query": "q", "answer": "a"}\n', encoding="utf-8")
+    cohort = tmp_path / "c.json"
+    cohort.write_text("{not json", encoding="utf-8")
+    assert main(["board", str(items), "-c", str(cohort)]) == 1
+    assert "Not readable JSON" in capsys.readouterr().err
+
+
+def test_boards_lists_what_was_written(tmp_path, capsys):
+    """Built here rather than run: this is about the listing, not the running."""
+    from auto_eval.board import Board, Row, write_board
+    from auto_eval.cohort import SystemKind
+    from auto_eval.score import Verdict
+
+    board = Board(
+        board_id="vendors-20260101-000000",
+        started_at="2026-01-01T00:00:00+00:00",
+        task="factual lookup",
+        dataset="news",
+        dataset_digest="deadbeefdeadbeef",
+        items=3,
+        rows=[
+            Row(
+                label="Alpha",
+                n=3,
+                correct=3,
+                verdicts=[
+                    Verdict(item_id=str(i), correct=True, rank=1) for i in range(3)
+                ],
+            ),
+            Row(
+                label="model only (no search)",
+                kind=SystemKind.MODEL_ONLY,
+                n=3,
+                correct=0,
+                verdicts=[Verdict(item_id=str(i)) for i in range(3)],
+            ),
+        ],
+    )
+    write_board(board, tmp_path / "boards")
+
+    assert (
+        main(["boards", "--dir", str(tmp_path / "boards"), "--format", "json"])
+        == EXIT_OK
+    )
+    listed = json.loads(capsys.readouterr().out)
+    assert listed[0]["items"] == 3
+    assert listed[0]["leader"] == "Alpha" and listed[0]["baseline_accuracy"] == 0.0
+
+
+def test_boards_says_so_when_there_are_none(tmp_path, capsys):
+    assert main(["boards", "--dir", str(tmp_path / "nothing")]) == EXIT_OK
+    assert "No boards under" in capsys.readouterr().err
+
+
+def test_the_example_cohort_and_dataset_that_ship_with_the_repo_are_readable():
+    """The two files the docs point at have to load, or the first run fails."""
+    from pathlib import Path
+
+    from auto_eval.cohort import load as load_cohort
+    from auto_eval.dataset import load as load_dataset
+
+    # Resolved from this file, not from the working directory: the examples are
+    # part of the repository, not of wherever pytest happened to be started.
+    examples = Path(__file__).resolve().parent.parent / "examples"
+    cohort = load_cohort(examples / "cohort-web-search.json")
+    assert len(cohort.systems) >= 3
+    assert all(s.endpoint and s.endpoint.secrets() for s in cohort.systems)
+
+    dataset = load_dataset(examples / "dataset-benchmark-facts.jsonl")
+    assert len(dataset.items) >= 3
+    assert all(item.answers and item.published for item in dataset.items)
