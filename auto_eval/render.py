@@ -11,6 +11,7 @@ from .board import Board, Row
 from .contamination import Cutoff, Freshness, FreshSource, fresh_by_verdict
 from .ground_truth import Availability, Coverage, Gate, GroundTruthReport
 from .runner import CaseStatus, Group, RunReport, Score, Tally
+from .saturation import LoopReport, Round
 from .schema import EvidenceStatus, Readiness, TaskSpec
 from .suite import Split, Suite, kpi_coverage
 from .surface import CellStatus, CoverageMatrix
@@ -990,15 +991,105 @@ def render_case(case: Case) -> str:
     return "\n".join(lines)
 
 
+def render_round(this_round: Round) -> str:
+    """One round of the hardening loop: the board it ran, and what it rewrote."""
+    lines: List[str] = [
+        f"## Round {this_round.index}",
+        "",
+        f"**Board:** `{this_round.board_id}`  ",
+        f"**Items:** {this_round.items} from `{this_round.dataset_digest}`  ",
+        "**Model-only baseline:** " + _pct(this_round.baseline),
+        "",
+        "| System | Accuracy | Correct | Scored |",
+        "| --- | --- | --- | --- |",
+    ]
+    for row in this_round.rows:
+        lines.append(
+            f"| {row.label} | {_pct(row.accuracy)} | {row.correct} | {row.scored} |"
+        )
+    lines.append("")
+
+    ceiling = this_round.saturated_rows
+    lines.append(
+        f"**At or above the {this_round.threshold:.0%} ceiling:** "
+        + (", ".join(ceiling) if ceiling else "_nothing - the board separates_")
+    )
+    if this_round.threshold < 1.0:
+        perfect = this_round.perfect_rows
+        lines.append("")
+        lines.append("**At 100%:** " + (", ".join(perfect) if perfect else "_nothing_"))
+    everywhere = this_round.saturated_items
+    lines.append("")
+    lines.append(
+        "**Items every scored system got right:** "
+        + (", ".join(f"`{item}`" for item in everywhere) if everywhere else "_none_")
+    )
+    lines.append("")
+
+    if this_round.rewrites:
+        lines += ["### Rewritten", ""]
+        for rewrite in this_round.rewrites:
+            mark = "accepted" if rewrite.accepted else "kept as it was"
+            lines.append(f"**`{rewrite.item_id}`** — {mark}: {rewrite.why}")
+            lines.append("")
+            lines.append(
+                f"- was: {rewrite.was_query} → {', '.join(rewrite.was_answers) or '—'}"
+            )
+            if rewrite.accepted:
+                lines.append(
+                    f"- now: {rewrite.now_query} → {', '.join(rewrite.now_answers)}"
+                )
+                if rewrite.source:
+                    lines.append(f"- verified against: <{rewrite.source}>")
+                if rewrite.evidence:
+                    lines.append(f"- evidence: _{rewrite.evidence}_")
+            lines.append("")
+    return "\n".join(lines)
+
+
+def render_loop(report: LoopReport) -> str:
+    """The loop as a document: every board it ran, in the order it ran them."""
+    lines: List[str] = [
+        f"# Hardening {report.dataset} against {report.cohort}",
+        "",
+        f"**Rounds:** {len(report.rounds)}  ",
+        f"**Ceiling:** {report.threshold:.0%}  ",
+        f"**Items rewritten:** {report.rewritten}  ",
+        f"**Stopped because:** {report.stopped}",
+        "",
+    ]
+    for this_round in report.rounds:
+        lines.append(render_round(this_round))
+
+    first = report.rounds[0] if report.rounds else None
+    last = report.rounds[-1] if report.rounds else None
+    if first is not None and last is not None and first is not last:
+        lines += [
+            "## What moved",
+            "",
+            "| System | Round 1 | " + f"Round {last.index} |",
+            "| --- | --- | --- |",
+        ]
+        before = {row.label: row.accuracy for row in first.rows}
+        for row in last.rows:
+            lines.append(
+                f"| {row.label} | {_pct(before.get(row.label))} | {_pct(row.accuracy)} |"
+            )
+        lines.append("")
+    return "\n".join(lines)
+
+
 __all__ = [
     "render_analysis",
     "render_board",
     "render_case",
     "render_fresh",
     "render_ground_truth",
+    "render_loop",
     "render_markdown",
     "render_profile",
     "render_questions",
+    "render_round",
     "render_run",
     "render_suite",
 ]

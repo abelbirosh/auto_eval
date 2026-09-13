@@ -12,7 +12,7 @@ from .agent import agent_gate, profile
 from .analysis import AnalysisReport, analyze_sources
 from .benchmarks import CATALOGUE, Benchmark, BenchmarkMatch, match
 from .board import DEFAULT_CONCURRENCY as BOARD_CONCURRENCY
-from .board import BoardError, run_board, write_board
+from .board import Board, BoardError, run_board, write_board
 from .board import list_boards as list_board_dirs
 from .classifier import DEFAULT_MAX_TOKENS, ClassifierError, classify, list_models
 from .cohort import CohortError
@@ -29,15 +29,25 @@ from .render import (
     render_case,
     render_fresh,
     render_ground_truth,
+    render_loop,
     render_markdown,
     render_profile,
     render_questions,
+    render_round,
     render_run,
     render_suite,
 )
 from .runner import DEFAULT_CONCURRENCY, RunError, load_run, write_run
 from .runner import list_runs as list_run_dirs
 from .runner import run_suite as execute_suite
+from .saturation import (
+    DEFAULT_REWRITES,
+    DEFAULT_ROUNDS,
+    SATURATED,
+    Round,
+    run_loop,
+    write_dataset,
+)
 from .schema import Readiness, TaskSpec
 from .suite import Split, SuiteError
 from .suite import build as build_suite
@@ -501,6 +511,76 @@ def _cmd_board(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_harden(args: argparse.Namespace) -> int:
+    """Run the board, rewrite whatever saturated, and run it again."""
+    dataset = load_dataset(Path(args.dataset))
+    cohort = load_cohort(Path(args.cohort))
+    settings = get_settings()
+
+    if not settings.has_key:
+        print(
+            "error: the loop needs an API key - it rewrites items with a model and "
+            "runs a model-only baseline. Put OPENAI_API_KEY in your .env.",
+            file=sys.stderr,
+        )
+        return EXIT_ERROR
+
+    for system, why in cohort.runnable()[1]:
+        print(f"  skipping {system.label}: {why}", file=sys.stderr)
+
+    def progress(done: int, total: int, label: str) -> None:
+        if done == total or done % 10 == 0:
+            print(f"  [{done}/{total}] {label}", file=sys.stderr)
+
+    def announce(this_round: Round, board: Board) -> None:
+        # Every board is printed as it finishes: the loop is the sequence of
+        # boards, and a report only at the end hides the runs that made it.
+        print(render_round(this_round))
+        sys.stdout.flush()
+        if not args.no_write:
+            target = Path(args.out or "boards") / board.board_id
+            if target.is_dir():
+                (target / "board.md").write_text(
+                    render_board(board) + "\n", encoding="utf-8"
+                )
+
+    try:
+        report, hardened = run_loop(
+            dataset,
+            cohort,
+            rounds=args.rounds,
+            threshold=args.threshold,
+            rewrites=args.rewrites,
+            model=args.rewrite_model,
+            settings=settings,
+            boards_dir=None if args.no_write else Path(args.out or "boards"),
+            announce=announce,
+            judge_model=args.judge_model,
+            limit=args.limit,
+            concurrency=args.concurrency,
+            baseline=not args.no_baseline,
+            progress=None if args.quiet else progress,
+        )
+    except (BoardError, DatasetError, CohortError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+
+    print(render_loop(report))
+
+    if not args.no_write:
+        target = Path(args.dataset_out) if args.dataset_out else None
+        if target is not None and report.rewritten:
+            write_dataset(hardened, target)
+            print(f"\nWrote {target}", file=sys.stderr)
+        elif target is not None:
+            print(
+                f"Nothing verified, so {target} was not written and "
+                f"{args.dataset} still stands.",
+                file=sys.stderr,
+            )
+    return EXIT_OK
+
+
 def _cmd_boards(args: argparse.Namespace) -> int:
     """List the boards on disk, newest first."""
     entries = list_board_dirs(Path(args.dir or "boards"))
@@ -935,6 +1015,84 @@ def build_parser() -> argparse.ArgumentParser:
         help="Stdout format.",
     )
     board_cmd.set_defaults(func=_cmd_board)
+
+    harden_cmd = sub.add_parser(
+        "harden",
+        help="Run the board, rewrite whatever saturated, run it again.",
+        description=(
+            "The closed loop over a board. It runs the cohort, finds the rows that "
+            "reached 100% and the items holding them there, rewrites those items into "
+            "harder questions drawn from their own source documents - verified against "
+            "the fetched page, never taken on the model's word - and runs the board "
+            "again. Every board is printed as it finishes."
+        ),
+    )
+    harden_cmd.add_argument(
+        "dataset", help="A .jsonl or .json file of items with gold answers."
+    )
+    harden_cmd.add_argument(
+        "-c",
+        "--cohort",
+        required=True,
+        metavar="PATH",
+        help="The cohort JSON: the systems to compare.",
+    )
+    harden_cmd.add_argument(
+        "--rounds",
+        type=int,
+        default=DEFAULT_ROUNDS,
+        help=f"Boards to run at most (default {DEFAULT_ROUNDS}).",
+    )
+    harden_cmd.add_argument(
+        "--threshold",
+        type=float,
+        default=SATURATED,
+        help=(
+            "The accuracy that counts as saturated, as a fraction "
+            f"(default {SATURATED:g} - a row that got everything right)."
+        ),
+    )
+    harden_cmd.add_argument(
+        "--rewrites",
+        type=int,
+        default=DEFAULT_REWRITES,
+        help=f"Items to rewrite per round (default {DEFAULT_REWRITES}).",
+    )
+    harden_cmd.add_argument(
+        "--rewrite-model",
+        default=None,
+        help="The model that proposes replacements. Defaults to the configured one.",
+    )
+    harden_cmd.add_argument(
+        "--judge-model", default=None, help="Settles items that have no gold answer."
+    )
+    harden_cmd.add_argument(
+        "--limit", type=int, default=None, help="Score the first N items."
+    )
+    harden_cmd.add_argument(
+        "--concurrency",
+        type=int,
+        default=BOARD_CONCURRENCY,
+        help=f"Items in flight per system (default {BOARD_CONCURRENCY}).",
+    )
+    harden_cmd.add_argument(
+        "--no-baseline",
+        action="store_true",
+        help="Leave out the model-only row. You lose the control that the board rests on.",
+    )
+    harden_cmd.add_argument(
+        "-o", "--out", metavar="PATH", help="Where to write each round's board."
+    )
+    harden_cmd.add_argument(
+        "--dataset-out",
+        metavar="PATH",
+        help="Where to write the hardened items. Without it the dataset is left alone.",
+    )
+    harden_cmd.add_argument(
+        "--no-write", action="store_true", help="Print the rounds without writing them."
+    )
+    harden_cmd.add_argument("--quiet", action="store_true", help="No progress.")
+    harden_cmd.set_defaults(func=_cmd_harden)
 
     boards_cmd = sub.add_parser("boards", help="List the boards on disk, newest first.")
     boards_cmd.add_argument(

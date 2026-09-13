@@ -129,6 +129,52 @@ unscored when there is none.
   the answer was found in — so a three-point gap between vendors can be checked
   rather than believed.
 
+## When the board saturates
+
+A row at 100% has stopped being a measurement. Every system at the ceiling is
+tied, the gaps that would have separated them are invisible, and the honest
+reading is not *this vendor is perfect* but *these items ran out of difficulty*.
+The number to fix is the dataset, so there is a loop for it:
+
+```bash
+auto-eval harden examples/dataset-hard-lookup.jsonl \
+  -c examples/cohort-web-search.json \
+  --rounds 2 --dataset-out examples/dataset-hard-lookup-hardened.jsonl
+```
+
+```text
+run the board -> find what saturated -> rewrite those items harder -> run again
+```
+
+Two readings of "saturated", and both are used. A **row** at the ceiling is what
+triggers the loop. The **items** that row got right are what held it there, and
+the ones every other row also got right are ranked first — they have the least
+difficulty left in them. Only items a saturated row actually answered are
+candidates: an item it never got right is not what made it perfect.
+
+A rewrite is the one place a model invents something here, so it is the one
+place nothing it says is believed. It is shown the item's own source document
+and asked for a *different, harder* fact from that same page — one that sits
+inside the document with a near-identical competing value nearby. What comes
+back is then checked the way the board checks an answer:
+
+- the new gold answer has to appear, at a word boundary, in the text fetched
+  from the cited URL;
+- the question has to have changed, and must not contain its own answer;
+- the answer has to be a different fact, not the old one reworded.
+
+A proposal that fails any of those is dropped and the original item stands. A
+suite that quietly fills with unverifiable items is worse than a saturated one.
+The item keeps its `url` and its `published` date, so the contamination check
+still reads the same thing afterwards.
+
+Every round prints its board as it finishes, because the loop *is* the sequence
+of boards — a report only at the end hides the runs that produced it. It stops
+when no row is at the ceiling, when a round verifies nothing, or when it runs
+out of `--rounds`. `--threshold 0.9` catches rows that are saturating rather than
+saturated, and `--dataset-out` is required before anything is written: without
+it the loop reports and leaves your dataset alone.
+
 ## From the page
 
 A spec whose subject is an endpoint, a model, or a retrieval API has no

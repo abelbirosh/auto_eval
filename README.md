@@ -109,6 +109,7 @@ published price.
 ```bash
 auto-eval board items.jsonl -c cohort.json    # or "Run the board" on the page
 auto-eval boards
+auto-eval harden items.jsonl -c cohort.json   # when a row reaches 100%
 ```
 
 | System | Endpoint & configuration | Accuracy | AR@1 | AR@5 | p50 | Total $ | $ / 1k correct |
@@ -131,6 +132,13 @@ held constant — the items, the model, the judge — is recorded on the board, 
 are alphabetical because no single column decides the answer, and a vendor whose
 key is missing is reported as not run rather than scored as bad. [`board/`](board/)
 has the detail.
+
+A row at 100% is the other thing a board can report, and it is a fault in the
+dataset rather than a result: every system at the ceiling is tied and the gaps
+that matter are invisible. `auto-eval harden` closes that loop — it runs the
+board, takes the items holding a perfect row up, asks for a harder fact from
+each item's own source document, keeps only the replacements whose answer it can
+find in the page it fetched, and runs the board again.
 
 ## Contamination
 
