@@ -498,3 +498,64 @@ def test_fresh_says_when_it_has_no_cutoff_on_file(capsys):
     captured = capsys.readouterr()
     assert "No published cutoff on file" in captured.err
     assert "nothing is judged post-cutoff" in captured.out
+
+
+# --- boards ---------------------------------------------------------------
+
+
+def test_board_parser_requires_a_cohort():
+    args = build_parser().parse_args(["board", "items.jsonl", "-c", "cohort.json"])
+    assert args.dataset == "items.jsonl" and args.cohort == "cohort.json"
+    assert args.no_baseline is False  # the control is on by default
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["board", "items.jsonl"])
+
+
+def test_a_dataset_that_is_not_there_is_a_readable_error(tmp_path, capsys):
+    cohort = tmp_path / "c.json"
+    cohort.write_text('[{"label": "A", "kind": "model_only"}]', encoding="utf-8")
+    assert main(["board", str(tmp_path / "nope.jsonl"), "-c", str(cohort)]) == 1
+    assert "No dataset at" in capsys.readouterr().err
+
+
+def test_a_cohort_that_is_not_one_is_a_readable_error(tmp_path, capsys):
+    items = tmp_path / "i.jsonl"
+    items.write_text('{"query": "q", "answer": "a"}\n', encoding="utf-8")
+    cohort = tmp_path / "c.json"
+    cohort.write_text("{not json", encoding="utf-8")
+    assert main(["board", str(items), "-c", str(cohort)]) == 1
+    assert "Not readable JSON" in capsys.readouterr().err
+
+
+def test_boards_lists_what_was_written(tmp_path, capsys):
+    from auto_eval.board import write_board
+    from tests.test_board import board as build_board
+
+    write_board(build_board(), tmp_path / "boards")
+    assert (
+        main(["boards", "--dir", str(tmp_path / "boards"), "--format", "json"])
+        == EXIT_OK
+    )
+    listed = json.loads(capsys.readouterr().out)
+    assert listed[0]["items"] == 3 and listed[0]["baseline_accuracy"] is not None
+
+
+def test_boards_says_so_when_there_are_none(tmp_path, capsys):
+    assert main(["boards", "--dir", str(tmp_path / "nothing")]) == EXIT_OK
+    assert "No boards under" in capsys.readouterr().err
+
+
+def test_the_example_cohort_and_dataset_that_ship_with_the_repo_are_readable():
+    """The two files the docs point at have to load, or the first run fails."""
+    from pathlib import Path
+
+    from auto_eval.cohort import load as load_cohort
+    from auto_eval.dataset import load as load_dataset
+
+    cohort = load_cohort(Path("examples/cohort-web-search.json"))
+    assert len(cohort.systems) >= 3
+    assert all(s.endpoint and s.endpoint.secrets() for s in cohort.systems)
+
+    dataset = load_dataset(Path("examples/dataset-benchmark-facts.jsonl"))
+    assert len(dataset.items) >= 3
+    assert all(item.answers and item.published for item in dataset.items)

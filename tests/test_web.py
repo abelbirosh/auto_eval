@@ -495,3 +495,149 @@ def test_a_benchmark_without_a_key_is_refused_before_the_suite_is_written(
 
 def test_the_dashboard_can_be_linked_to_one_run(client):
     assert "wantedRun" in client.get("/dashboard").text
+
+
+# --- boards ---------------------------------------------------------------
+
+BOARD_COHORT = """{
+  "name": "vendors", "model": "fake-model",
+  "systems": [{"label": "Alpha", "configuration": "POST /search",
+    "endpoint": {"url": "https://alpha.test/search", "body": {"q": "{query}"}}}]
+}"""
+
+BOARD_ITEMS = '{"id":"i1","query":"Who did Acme acquire?","answers":["Bolt"],"published":"2026-06-04"}'
+
+
+def _finished(client, job, tries=200):
+    for _ in range(tries):
+        job = client.get(f"/api/run/{job['job_id']}").json()
+        if job["state"] != "running":
+            return job
+    return job
+
+
+@pytest.fixture
+def board_run(client, tmp_path, monkeypatch):
+    """A board over one item, with both the model and the vendor stubbed."""
+    from auto_eval import board as board_module
+
+    class _Obj:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class FakeHTTP:
+        def post(self, url, json=None, **kw):
+            return _Obj(
+                status_code=200,
+                text="{}",
+                json=lambda: {
+                    "results": [{"title": "n", "url": "u", "text": "Acme bought Bolt"}]
+                },
+            )
+
+    class FakeModel:
+        def __init__(self):
+            self.chat = _Obj(completions=self)
+
+        def create(self, **kwargs):
+            return _Obj(
+                choices=[
+                    _Obj(
+                        message=_Obj(content="unknown", tool_calls=None),
+                        finish_reason="stop",
+                    )
+                ],
+                usage=_Obj(prompt_tokens=10, completion_tokens=2),
+            )
+
+    real = board_module.run_board
+    monkeypatch.setattr(
+        web,
+        "run_board",
+        lambda dataset, cohort, **kw: real(
+            dataset, cohort, **{**kw, "client": FakeModel(), "http": FakeHTTP()}
+        ),
+    )
+    started = client.post(
+        "/api/board",
+        json={
+            "cohort": BOARD_COHORT,
+            "dataset": BOARD_ITEMS,
+            "dataset_name": "news",
+            "out": str(tmp_path / "boards"),
+        },
+    )
+    assert started.status_code == 200, started.json()
+    job = _finished(client, started.json())
+    assert job["state"] == "done", job.get("error")
+    monkeypatch.setenv("AUTO_EVAL_RUNS_DIR", str(tmp_path / "runs"))
+    return job
+
+
+def test_a_board_runs_from_the_page_and_is_written(board_run, tmp_path):
+    assert board_run["board_id"]
+    assert (tmp_path / "boards" / board_run["board_id"] / "board.json").is_file()
+
+
+def test_a_board_reads_back_with_its_rows_and_its_baseline(client, board_run, tmp_path):
+    body = client.get(
+        f"/api/boards/{board_run['board_id']}", params={"dir": str(tmp_path / "boards")}
+    ).json()
+    labels = [row["label"] for row in body["rows"]]
+    assert "Alpha" in labels and any("model only" in label for label in labels)
+    alpha = next(row for row in body["rows"] if row["label"] == "Alpha")
+    assert alpha["accuracy"] == 1.0 and alpha["recall_at_1"] == 1.0
+
+
+def test_boards_are_listed_with_what_they_found(client, board_run, tmp_path):
+    listed = client.get("/api/boards", params={"dir": str(tmp_path / "boards")}).json()
+    assert [entry["board_id"] for entry in listed] == [board_run["board_id"]]
+    assert listed[0]["leader"] == "Alpha"
+    assert listed[0]["baseline_accuracy"] == 0.0
+
+
+def test_a_board_can_be_read_as_a_document(client, board_run, tmp_path):
+    body = client.get(
+        f"/api/boards/{board_run['board_id']}/markdown",
+        params={"dir": str(tmp_path / "boards")},
+    ).json()
+    assert "## The board" in body["markdown"]
+    assert "Model-only baseline" in body["markdown"]
+
+
+def test_a_board_with_no_items_is_a_readable_400(client):
+    response = client.post("/api/board", json={"cohort": BOARD_COHORT})
+    assert response.status_code == 400 and "No items" in response.json()["detail"]
+
+
+def test_a_cohort_that_is_not_one_is_a_readable_400(client):
+    response = client.post(
+        "/api/board", json={"cohort": "{nope", "dataset": BOARD_ITEMS}
+    )
+    assert response.status_code == 400 and "JSON" in response.json()["detail"]
+
+
+def test_a_board_without_a_key_is_refused_before_it_starts(client, monkeypatch):
+    from auto_eval.config import Settings
+
+    monkeypatch.setattr(
+        web,
+        "get_settings",
+        lambda **kw: Settings(api_key=None, model="m", base_url=None),
+    )
+    response = client.post(
+        "/api/board", json={"cohort": BOARD_COHORT, "dataset": BOARD_ITEMS}
+    )
+    assert response.status_code == 400 and "API key" in response.json()["detail"]
+
+
+def test_the_page_offers_a_board_for_a_subject_with_no_trajectory(client):
+    page = client.get("/").text
+    assert "/api/board" in page
+    assert "Run the board" in page
+    # And it says why this shape rather than the other one.
+    assert "no trajectory to" in page
+
+
+def test_an_unknown_board_is_a_404(client):
+    assert client.get("/api/boards/no-such-board").status_code == 404

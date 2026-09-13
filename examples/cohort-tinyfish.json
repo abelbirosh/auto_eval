@@ -1,0 +1,41 @@
+{
+  "name": "tinyfish-search",
+  "task": "factual lookup",
+  "notes": [
+    "One vendor, two ways of using it: the endpoint scored on what it returns, and the same endpoint handed to the model as a tool.",
+    "TinyFish search is free with a published rate cap, so its spend columns are zero rather than blank."
+  ],
+  "systems": [
+    {
+      "label": "TinyFish search",
+      "vendor": "TinyFish",
+      "kind": "search_api",
+      "configuration": "GET api.search.tinyfish.ai",
+      "docs_url": "https://api.search.tinyfish.ai",
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.search.tinyfish.ai/",
+        "headers": { "X-API-Key": "${TINYFISH_API_KEY}" },
+        "params": { "query": "{query}" },
+        "results_path": "results",
+        "fields": { "title": "title", "url": "url", "snippet": "snippet" }
+      },
+      "price": { "per_call_usd": 0.0, "note": "free, with a published rate cap" }
+    },
+    {
+      "label": "TinyFish search, model with tool",
+      "vendor": "TinyFish",
+      "kind": "model_with_tool",
+      "configuration": "the held-constant model, with GET api.search.tinyfish.ai as its only tool",
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.search.tinyfish.ai/",
+        "headers": { "X-API-Key": "${TINYFISH_API_KEY}" },
+        "params": { "query": "{query}" },
+        "results_path": "results",
+        "fields": { "title": "title", "url": "url", "snippet": "snippet" }
+      },
+      "price": { "per_call_usd": 0.0, "per_million_input_usd": 0.25, "per_million_output_usd": 2.0, "note": "free search; model tokens at the gpt-5-mini list price" }
+    }
+  ]
+}

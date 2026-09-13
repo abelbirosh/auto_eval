@@ -1,0 +1,3 @@
+{"id": "1", "query": "Which company did Acme Robotics acquire in June 2026, and for how much?", "answers": ["Bolt Systems"], "published": "2026-06-04", "url": "https://example.com/acme-bolt", "note": "Replace these rows with facts dated after your model's cutoff. Each answer must be checkable on the page in `url`."}
+{"id": "2", "query": "What funding round did Foobar AI close in July 2026?", "answers": ["Series C"], "published": "2026-07-11", "url": "https://example.com/foobar-series-c"}
+{"id": "3", "query": "In which city did Zeta Labs open its first European office in August 2026?", "answers": ["Lisbon"], "published": "2026-08-01", "url": "https://example.com/zeta-lisbon"}

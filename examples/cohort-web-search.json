@@ -1,0 +1,75 @@
+{
+  "name": "web-search",
+  "task": "factual lookup",
+  "model": "gpt-5-mini",
+  "judge_model": "gpt-5",
+  "notes": [
+    "Every row is the vendor's own endpoint at its documented default page size.",
+    "Prices are the published pay-as-you-go list price, not a negotiated or promotional rate."
+  ],
+  "systems": [
+    {
+      "label": "Exa fast",
+      "vendor": "Exa",
+      "kind": "search_api",
+      "configuration": "POST /search type=fast",
+      "docs_url": "https://docs.exa.ai/reference/search",
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.exa.ai/search",
+        "headers": { "x-api-key": "${EXA_API_KEY}", "content-type": "application/json" },
+        "body": { "query": "{query}", "type": "fast", "numResults": 10, "contents": { "text": true } },
+        "results_path": "results",
+        "fields": { "title": "title", "url": "url", "snippet": "text" }
+      },
+      "price": { "per_call_usd": 0.005, "note": "check the current rate on the pricing page", "source": "https://exa.ai/pricing" }
+    },
+    {
+      "label": "Tavily basic",
+      "vendor": "Tavily",
+      "kind": "search_api",
+      "configuration": "POST /search search_depth=basic",
+      "docs_url": "https://docs.tavily.com/documentation/api-reference/endpoint/search",
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.tavily.com/search",
+        "headers": { "authorization": "Bearer ${TAVILY_API_KEY}", "content-type": "application/json" },
+        "body": { "query": "{query}", "search_depth": "basic", "max_results": 10 },
+        "results_path": "results",
+        "fields": { "title": "title", "url": "url", "snippet": "content" }
+      },
+      "price": { "per_call_usd": 0.008, "note": "1 credit per basic search", "source": "https://tavily.com/#pricing" }
+    },
+    {
+      "label": "Brave web search",
+      "vendor": "Brave",
+      "kind": "search_api",
+      "configuration": "GET /res/v1/web/search count=10",
+      "docs_url": "https://api-dashboard.search.brave.com/app/documentation/web-search/get-started",
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.search.brave.com/res/v1/web/search",
+        "headers": { "X-Subscription-Token": "${BRAVE_API_KEY}", "Accept": "application/json" },
+        "params": { "q": "{query}", "count": 10 },
+        "results_path": "web.results",
+        "fields": { "title": "title", "url": "url", "snippet": "description" }
+      },
+      "price": { "per_call_usd": 0.005, "note": "check the current rate on the pricing page", "source": "https://brave.com/search/api/" }
+    },
+    {
+      "label": "Exa fast, model with tool",
+      "vendor": "Exa",
+      "kind": "model_with_tool",
+      "configuration": "the held-constant model, with POST /search type=fast as its only tool",
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.exa.ai/search",
+        "headers": { "x-api-key": "${EXA_API_KEY}", "content-type": "application/json" },
+        "body": { "query": "{query}", "type": "fast", "numResults": 5, "contents": { "text": true } },
+        "results_path": "results",
+        "fields": { "title": "title", "url": "url", "snippet": "text" }
+      },
+      "price": { "per_call_usd": 0.005, "per_million_input_usd": 0.25, "per_million_output_usd": 2.0, "note": "search calls plus model tokens" }
+    }
+  ]
+}

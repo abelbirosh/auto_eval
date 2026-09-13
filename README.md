@@ -98,6 +98,33 @@ end-state checks impossible, so those are reported as **blocked, with the reason
 rather than dropped — every pass rate sits next to the count of what did not run.
 [`runner/`](runner/) has the detail.
 
+## Comparing several systems
+
+Not everything under test has a trajectory. When the subject is an endpoint, a
+model, or a retrieval API, the question is which of several systems does the job
+best, and the answer is a board: one dataset, many systems, one row each, with
+accuracy, answer recall at 1 and 5, latency, errors and spend at the vendor's
+published price.
+
+```bash
+auto-eval board items.jsonl -c cohort.json    # or "Run the board" on the page
+auto-eval boards
+```
+
+| System | Endpoint & configuration | Accuracy | AR@1 | p50 | Total $ | $ / 1k correct |
+| --- | --- | --- | --- | --- | --- | --- |
+| model only (no search) | the model answering from memory | 0.0% | — | 5.33s | — | — |
+| TinyFish search | GET api.search.tinyfish.ai | 80.0% | 20.0% | 964ms | $0.0000 | $0.0000 |
+| TinyFish search, model with tool | the model, with that endpoint as its only tool | 100.0% | — | 8.55s | $0.0076 | $1.5224 |
+
+The first row is the point. **Model only** is the same model with no endpoint at
+all: on items published after its training cutoff it should score near zero, and
+when it does, every other row is measuring retrieval rather than recall. What is
+held constant — the items, the model, the judge — is recorded on the board, rows
+are alphabetical because no single column decides the answer, and a vendor whose
+key is missing is reported as not run rather than scored as bad. [`board/`](board/)
+has the detail.
+
 ## Contamination
 
 A public suite older than the model measures capability and recall at once. Every

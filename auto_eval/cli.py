@@ -11,13 +11,21 @@ from typing import List, Optional
 from .agent import agent_gate, profile
 from .analysis import AnalysisReport, analyze_sources
 from .benchmarks import CATALOGUE, Benchmark, BenchmarkMatch, match
+from .board import DEFAULT_CONCURRENCY as BOARD_CONCURRENCY
+from .board import BoardError, run_board, write_board
+from .board import list_boards as list_board_dirs
 from .classifier import DEFAULT_MAX_TOKENS, ClassifierError, classify, list_models
+from .cohort import CohortError
+from .cohort import load as load_cohort
 from .config import DEFAULT_MODEL, get_settings
 from .contamination import cutoff_for, parse_cutoff
+from .dataset import DatasetError
+from .dataset import load as load_dataset
 from .gaps import analyze
 from .ground_truth import GroundTruthReport, gate, identify
 from .render import (
     render_analysis,
+    render_board,
     render_case,
     render_fresh,
     render_ground_truth,
@@ -431,6 +439,98 @@ def _cmd_fresh(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_board(args: argparse.Namespace) -> int:
+    """Compare several systems on the same items, and write the board."""
+    dataset = load_dataset(Path(args.dataset))
+    cohort = load_cohort(Path(args.cohort))
+    settings = get_settings()
+    model = args.model or cohort.model or settings.effective_subject_model
+
+    needs_model = any(s.calls_a_model for s in cohort.systems) or not args.no_baseline
+    if needs_model and not settings.has_key:
+        print(
+            "error: rows that use a model need an API key. Put OPENAI_API_KEY in your .env, "
+            "or pass --no-baseline and a cohort of endpoint-only rows.",
+            file=sys.stderr,
+        )
+        return EXIT_ERROR
+
+    ready, blocked = cohort.runnable()
+    for system, why in blocked:
+        print(f"  skipping {system.label}: {why}", file=sys.stderr)
+    if not ready and not args.no_baseline:
+        print(
+            "Only the model-only baseline can run; every vendor row is missing its key.",
+            file=sys.stderr,
+        )
+
+    items = len(dataset.sample(args.limit))
+    print(
+        f"Running {len(cohort.systems) + (0 if cohort.baseline or args.no_baseline else 1)} "
+        f"system(s) over {items} item(s) = up to {items * len(cohort.systems)} call(s)",
+        file=sys.stderr,
+    )
+
+    def progress(done: int, total: int, label: str) -> None:
+        if done == total or done % 10 == 0:
+            print(f"  [{done}/{total}] {label}", file=sys.stderr)
+
+    board = run_board(
+        dataset,
+        cohort,
+        model=args.model,
+        judge_model=args.judge_model,
+        limit=args.limit,
+        concurrency=args.concurrency,
+        cutoff=parse_cutoff(model, args.cutoff) if args.cutoff else None,
+        baseline=not args.no_baseline,
+        progress=None if args.quiet else progress,
+        settings=settings,
+    )
+
+    document = render_board(board)
+    if args.format == "json":
+        print(board.model_dump_json(indent=2))
+    else:
+        print(document)
+
+    if not args.no_write:
+        target = write_board(board, Path(args.out or "boards"))
+        (target / "board.md").write_text(document + "\n", encoding="utf-8")
+        print(f"\nWrote {target}", file=sys.stderr)
+    return EXIT_OK
+
+
+def _cmd_boards(args: argparse.Namespace) -> int:
+    """List the boards on disk, newest first."""
+    entries = list_board_dirs(Path(args.dir or "boards"))
+    if not entries:
+        print(
+            f"No boards under {args.dir or 'boards'}. Run one with "
+            "`auto-eval board DATASET --cohort COHORT`.",
+            file=sys.stderr,
+        )
+        return EXIT_OK
+    if args.format == "json":
+        print(json.dumps([e.model_dump(mode="json") for e in entries], indent=2))
+        return EXIT_OK
+    for entry in entries:
+        leader = (
+            f"{entry.leader} at {entry.leader_accuracy:.1%}"
+            if entry.leader and entry.leader_accuracy is not None
+            else "nothing scored"
+        )
+        baseline = (
+            f"baseline {entry.baseline_accuracy:.1%}"
+            if entry.baseline_accuracy is not None
+            else "no baseline"
+        )
+        print(
+            f"{entry.board_id}  {entry.rows} row(s)  {entry.items} item(s)  {leader}  {baseline}"
+        )
+    return EXIT_OK
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     from .web import serve
 
@@ -772,6 +872,79 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fresh_cmd.set_defaults(func=_cmd_fresh)
 
+    board_cmd = sub.add_parser(
+        "board",
+        help="Compare several systems on the same items.",
+        description=(
+            "Runs every system in a cohort over the same dataset and writes the board: "
+            "accuracy, answer recall, latency, errors and spend, one row each. Rows are "
+            "alphabetical and no column decides the order. A model-only row is added unless "
+            "you say otherwise - it is the control that shows whether the answers could "
+            "simply be recalled."
+        ),
+    )
+    board_cmd.add_argument(
+        "dataset", help="A .jsonl or .json file of items with gold answers."
+    )
+    board_cmd.add_argument(
+        "-c",
+        "--cohort",
+        required=True,
+        metavar="PATH",
+        help="The cohort JSON: the systems to compare.",
+    )
+    board_cmd.add_argument(
+        "--model",
+        default=None,
+        help="The model held constant across rows that use one.",
+    )
+    board_cmd.add_argument(
+        "--judge-model", default=None, help="Settles items that have no gold answer."
+    )
+    board_cmd.add_argument(
+        "--limit", type=int, default=None, help="Score the first N items."
+    )
+    board_cmd.add_argument(
+        "--concurrency",
+        type=int,
+        default=BOARD_CONCURRENCY,
+        help=f"Items in flight per system (default {BOARD_CONCURRENCY}).",
+    )
+    board_cmd.add_argument(
+        "--no-baseline",
+        action="store_true",
+        help="Leave out the model-only row. You lose the control that the board rests on.",
+    )
+    board_cmd.add_argument(
+        "--cutoff",
+        metavar="YYYY-MM-DD",
+        default=None,
+        help="The model's training cutoff.",
+    )
+    board_cmd.add_argument(
+        "-o", "--out", metavar="PATH", help="Where to write the board."
+    )
+    board_cmd.add_argument(
+        "--no-write", action="store_true", help="Print it without writing it."
+    )
+    board_cmd.add_argument("--quiet", action="store_true", help="No progress.")
+    board_cmd.add_argument(
+        "--format",
+        choices=["markdown", "json"],
+        default="markdown",
+        help="Stdout format.",
+    )
+    board_cmd.set_defaults(func=_cmd_board)
+
+    boards_cmd = sub.add_parser("boards", help="List the boards on disk, newest first.")
+    boards_cmd.add_argument(
+        "--dir", metavar="PATH", help="Where the boards are. Defaults to ./boards."
+    )
+    boards_cmd.add_argument(
+        "--format", choices=["text", "json"], default="text", help="Stdout format."
+    )
+    boards_cmd.set_defaults(func=_cmd_boards)
+
     serve_cmd = sub.add_parser(
         "serve",
         help="Run the local web UI.",
@@ -826,7 +999,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)
-    except RunError as exc:
+    except (RunError, BoardError, CohortError, DatasetError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_ERROR
     except SuiteError as exc:
