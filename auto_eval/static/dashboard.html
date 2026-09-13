@@ -5,148 +5,318 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Auto_Eval &middot; runs</title>
 <style>
-  /* Same printed-spec-sheet look as the classifier page: cream paper, hairline
-     rules, weight and space doing the separating. A dashboard earns two extra
-     things - a bar, so a pass rate is legible at a glance, and three colours
-     that always mean the same thing: passed, failed, could not be checked. */
+  /* Auto-Eval runs — calibration certificate, engraved on a dark instrument
+     plate. A run is a measurement: this model, against this suite, on this
+     date, to this uncertainty. Nothing here is rounded, tinted glass, or
+     gradient — the world is solid blocks, hard rules, and knocked-out type.
+     Rank inside tabular data is carried by weight, case, reversal and rule,
+     never by a change of type size. */
   :root {
-    --paper:  #f6f2e8;
-    --ink:    #26221d;
-    --muted:  #8c8376;
-    --rule:   #e0d9c9;
-    --rule-2: #cec5b0;
-    --accent: #3f5c47;
-    --pass:   #3f6b4e;
-    --fail:   #9c4436;
-    --blocked:#8a6a22;
-    --tint:   #efe9da;
+    color-scheme: dark;
+
+    --ground:  #0D1012;   /* the panel the certificate is fixed to */
+    --panel:   #151A1D;   /* second neutral layer: toolbars, form beds */
+    --plate:   #1E2429;   /* engraved block: open rows, code, wells */
+    --rule:    #2B3238;   /* hairline grid */
+    --rule-2:  #414B52;   /* structural rule, field underlines */
+    --ink:     #EDE8DF;   /* 15.65:1 on ground */
+    --ink-2:   #A8A79E;   /* 7.90:1 — tinted from the ink, never neutral gray */
+
+    /* Reserved. Computed against the dark ground and validated for CVD
+       separation and 4.5:1 text contrast on all three surfaces; never used
+       for decoration, and never the only carrier of a verdict. */
+    --pass:    #48A260;
+    --blocked: #3E92D6;
+    --fail:    #DC6E5E;
+
+    --ui:   ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", monospace;
   }
+
   * { box-sizing: border-box; }
-  html { background: var(--paper); }
+  html { background: var(--ground); }
   body {
-    margin: 0; background: var(--paper); color: var(--ink);
-    font: 15px/1.6 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+    margin: 0; background: var(--ground); color: var(--ink);
+    font: 14px/1.6 var(--ui);
     -webkit-font-smoothing: antialiased;
+    font-variant-numeric: tabular-nums;
   }
-  .wrap { max-width: 1040px; margin: 0 auto; padding: 56px 24px 120px; }
 
-  header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
-  h1 { font-size: 19px; font-weight: 600; margin: 0; letter-spacing: .02em; }
-  h1 span { color: var(--muted); font-weight: 400; }
+  /* Browser surfaces carry the design too. */
+  ::selection { background: var(--ink); color: var(--ground); }
+  * { caret-color: var(--ink); }
+  * { scrollbar-color: var(--rule-2) var(--ground); scrollbar-width: thin; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: var(--ground); }
+  ::-webkit-scrollbar-thumb { background: var(--rule-2); border: 3px solid var(--ground); }
+  ::-webkit-scrollbar-thumb:hover { background: var(--ink-2); }
+  :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 0 24px 120px; }
+
+  /* ── Masthead ──────────────────────────────────────────────────────────
+     The certificate's heading block: title reversed out of a solid slab,
+     hard-ruled top and bottom. */
+  header { border-bottom: 2px solid var(--ink); padding: 30px 0 12px; margin-bottom: 0; }
+  .masthead { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+  h1 {
+    font-size: 17px; font-weight: 700; margin: 0;
+    letter-spacing: .16em; text-transform: uppercase;
+  }
+  h1 span { color: var(--ink-2); font-weight: 400; letter-spacing: .1em; }
   .meta {
-    margin-left: auto; font-size: 11.5px; color: var(--muted);
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .02em;
+    margin-left: auto; font-size: 11px; color: var(--ink-2);
+    font-family: var(--mono); letter-spacing: .04em;
   }
-  .sub { color: var(--muted); font-size: 14px; margin: 10px 0 30px; max-width: 74ch; }
-  a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--rule-2); }
-  a:hover { border-bottom-color: var(--accent); }
+  .sub { color: var(--ink-2); font-size: 13.5px; margin: 14px 0 0; max-width: 62ch; }
+  a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px;
+      text-decoration-color: var(--rule-2); text-decoration-thickness: 1px; }
+  a:hover { text-decoration-color: var(--ink); }
 
+  /* ── Controls ──────────────────────────────────────────────────────────
+     One primary control per surface, as a solid reversed slab. Everything
+     else is a ruled text control that never competes with it. */
   button {
-    font: inherit; font-size: 14px; padding: 0; border: 0; border-radius: 0;
-    background: none; cursor: pointer; color: var(--muted);
-    border-bottom: 1px solid transparent; transition: color .12s, border-color .12s;
+    font: inherit; font-size: 12px; font-weight: 700; letter-spacing: .1em;
+    text-transform: uppercase; border-radius: 0; cursor: pointer;
+    background: none; color: var(--ink-2); border: 0;
+    padding: 7px 0; transition: color .15s, background-color .15s, border-color .15s;
   }
-  button:hover { color: var(--ink); border-bottom-color: var(--rule-2); }
-  .primary { color: var(--accent); font-weight: 600; border-bottom-color: var(--accent); }
-  .primary:disabled { opacity: .5; cursor: progress; border-bottom-color: transparent; }
-  .row { display: flex; gap: 22px; align-items: center; margin-top: 16px; flex-wrap: wrap; }
-  .hint { color: var(--muted); font-size: 12px; }
+  button:hover { color: var(--ink); }
+  .primary {
+    background: var(--ink); color: var(--ground);
+    border: 1px solid var(--ink); padding: 9px 20px;
+  }
+  .primary:hover { background: var(--ink-2); border-color: var(--ink-2); color: var(--ground); }
+  .primary:disabled { background: none; color: var(--ink-2); border-color: var(--rule-2); cursor: progress; }
+  .row { display: flex; gap: 22px; align-items: center; margin-top: 18px; flex-wrap: wrap; }
+  .hint { color: var(--ink-2); font-size: 12px; font-family: var(--mono); }
 
-  .banner { margin: 0 0 24px; padding-left: 13px; font-size: 13.5px;
-    border-left: 2px solid var(--rule-2); color: var(--muted); }
-  .banner.warn { border-left-color: var(--blocked); color: var(--blocked); }
-  .banner.err  { border-left-color: var(--fail); color: var(--fail); }
+  .banner {
+    margin: 18px 0 0; padding: 11px 14px; font-size: 13px;
+    background: var(--plate); border-left: 1px solid var(--rule-2); color: var(--ink-2);
+  }
+  .banner.warn { border-left-color: var(--blocked); color: var(--ink); }
+  .banner.err  { border-left-color: var(--fail);    color: var(--ink); }
 
+  /* ── Section headings: a ruled band, not a floating label. ────────────── */
   h2 {
-    font-size: 11px; text-transform: uppercase; letter-spacing: .14em;
-    color: var(--muted); font-weight: 700;
-    margin: 36px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--rule);
+    font-size: 11px; text-transform: uppercase; letter-spacing: .18em;
+    color: var(--ink); font-weight: 700;
+    margin: 44px 0 0; padding: 0 0 9px; border-bottom: 1px solid var(--ink);
   }
-  h2 .why { text-transform: none; letter-spacing: 0; font-weight: 400; margin-left: 8px; }
-  h3 { font-size: 15px; font-weight: 600; margin: 0 0 6px; }
+  h2 .why {
+    text-transform: none; letter-spacing: 0; font-weight: 400;
+    color: var(--ink-2); margin-left: 10px; font-size: 12.5px;
+  }
+  h3 { font-size: 13px; font-weight: 700; margin: 0 0 6px; letter-spacing: .02em; }
 
-  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
-  th, td { text-align: left; padding: 8px 14px 8px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  /* ── The certificate grid ──────────────────────────────────────────────
+     One type size for every cell. Rank is weight, case, reversal and rule. */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td {
+    text-align: left; padding: 9px 14px;
+    border-bottom: 1px solid var(--rule); vertical-align: top;
+  }
+  thead th { border-bottom: 1px solid var(--rule-2); }
   th {
-    color: var(--muted); font-weight: 600; font-size: 10.5px;
+    color: var(--ink-2); font-weight: 700; font-size: 13px;
     text-transform: uppercase; letter-spacing: .1em; white-space: nowrap;
   }
-  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; padding-right: 18px; }
+  td.num, th.num { text-align: right; padding-right: 20px; font-variant-numeric: tabular-nums; }
   .scroll { overflow-x: auto; }
-  ul { margin: 4px 0; padding-left: 17px; }
-  li { margin: 4px 0; }
+  ul { margin: 6px 0; padding-left: 18px; }
+  /* Prose gets a measure; the data columns keep whatever width they need.
+     A cell holding a sentence (a blocked reason, a judge's note) is prose and
+     is capped too — short numeric cells sit under the cap already. */
+  li { margin: 4px 0; max-width: 62ch; }
+  details p, .open p, section > p { max-width: 62ch; }
+  .legend span { max-width: 62ch; }
+  /* A `max-width` on the cell itself is ignored by the auto table layout, so
+     prose inside a cell carries its own measure. */
+  td .measure { display: block; max-width: 62ch; }
   li::marker { color: var(--rule-2); }
 
-  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
-  code { color: var(--muted); }
-  .none { color: var(--muted); font-style: italic; }
-  .why { color: var(--muted); font-size: 12.5px; }
+  code, .mono { font-family: var(--mono); font-size: 12px; letter-spacing: .02em; }
+  code { color: var(--ink-2); }
+  .none { color: var(--ink-2); font-style: italic; }
+  .why { color: var(--ink-2); font-size: 12.5px; }
   pre {
-    background: var(--tint); padding: 14px; overflow-x: auto;
-    font-size: 12.5px; line-height: 1.55; margin: 10px 0 0; white-space: pre-wrap;
+    background: var(--plate); padding: 14px 16px; overflow-x: auto;
+    font-size: 12px; line-height: 1.6; margin: 10px 0 0; white-space: pre-wrap;
+    border-left: 1px solid var(--rule-2); color: var(--ink);
   }
   details { margin-top: 18px; border-top: 1px solid var(--rule); padding-top: 14px; }
   details.inline { margin: 0; border-top: 0; padding-top: 0; }
-  summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
+  /* Summaries carry sentences, not labels, so they stay in sentence case. */
+  summary { cursor: pointer; color: var(--ink-2); font-size: 12.5px; font-weight: 700; }
   summary:hover { color: var(--ink); }
 
-  /* The headline: one number, its denominator, and what it excludes. */
-  .figures { display: flex; gap: 44px; flex-wrap: wrap; margin: 26px 0 8px; }
-  .figure .n { font-size: 30px; font-weight: 600; letter-spacing: -.01em; line-height: 1.1; }
-  .figure .k { font-size: 10.5px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); font-weight: 700; }
-  .figure .d { font-size: 12.5px; color: var(--muted); }
-  .figure.pass .n { color: var(--pass); }
-  .figure.fail .n { color: var(--fail); }
-  .figure.blocked .n { color: var(--blocked); }
+  /* The facts block reads as a stamped record, not a table. Used by the board
+     panel, which arrived with the comparison view. */
+  table.facts { margin-top: 14px; }
+  table.facts th {
+    width: 128px; font-size: 11px; letter-spacing: .14em; padding-top: 6px;
+    vertical-align: top;
+  }
+  table.facts td, table.facts th { border-bottom: 0; padding: 4px 14px 4px 0; }
+  table.facts td { max-width: none; }
 
-  .bar { display: flex; height: 6px; margin: 6px 0 2px; background: var(--tint); min-width: 120px; }
+  /* ── Provenance stamp ──────────────────────────────────────────────────
+     What was measured, against what, when. Printed at the head of every
+     certificate, in the same monospace as the data it vouches for. */
+  .stamp {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+    border: 1px solid var(--rule-2); border-left: 0; margin-top: 20px;
+  }
+  .stamp div { border-left: 1px solid var(--rule-2); padding: 10px 14px; }
+  .stamp dt {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .14em;
+    color: var(--ink-2); font-weight: 700; margin: 0 0 5px;
+  }
+  .stamp dd {
+    margin: 0; font-family: var(--mono); font-size: 12.5px; color: var(--ink);
+    overflow-wrap: anywhere;
+  }
+
+  /* ── The result plate ──────────────────────────────────────────────────
+     The grade and the disclosure sit side by side at equal authority. The
+     rate is reversed out of solid ink; what did not run is printed beside
+     it, never beneath it and never smaller. */
+  .certify {
+    display: grid; grid-template-columns: minmax(230px, 300px) 1fr;
+    border: 1px solid var(--ink); margin-top: 20px;
+  }
+  .grade { background: var(--ink); color: var(--ground); padding: 20px 22px 18px; }
+  .grade .k {
+    font-size: 11px; font-weight: 700; letter-spacing: .16em;
+    text-transform: uppercase; color: #4A524E;   /* 6.60:1 on the bone plate */
+  }
+  .grade .n {
+    font-size: 58px; font-weight: 700; line-height: 1; letter-spacing: -.03em;
+    margin: 12px 0 8px; font-variant-numeric: tabular-nums;
+  }
+  .grade .d { font-size: 12.5px; line-height: 1.45; color: #3A423F; }  /* 8.47:1 */
+  .grade .none { color: #4A524E; }
+
+  .disclose { padding: 18px 22px; display: flex; flex-direction: column; gap: 14px; }
+  .disclose .k {
+    font-size: 11px; font-weight: 700; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--ink-2);
+  }
+  .excl { display: flex; gap: 30px; flex-wrap: wrap; }
+  .excl b { font-size: 22px; font-weight: 700; display: block; letter-spacing: -.01em; }
+  .excl span { font-size: 12.5px; color: var(--ink-2); }
+  .excl .blocked b { color: var(--blocked); }
+  .excl .fail b    { color: var(--fail); }
+  .excl .cost b    { color: var(--ink); }
+
+  /* ── Stacked tally bar ─────────────────────────────────────────────────
+     Square ends, a 2px ground gap between segments so the boundary is the
+     surface itself rather than a drawn line. */
+  .bar { display: flex; height: 8px; margin: 8px 0 6px; background: var(--plate); min-width: 130px; gap: 2px; }
   .bar i { display: block; height: 100%; }
   .bar .p { background: var(--pass); }
   .bar .f { background: var(--fail); }
-  .bar .b { background: var(--rule-2); }
+  .bar .b { background: var(--blocked); }
 
-  .badge { font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+  /* ── The legend ────────────────────────────────────────────────────────
+     Fixed, always level, and the only place the three words are defined.
+     A verdict is never carried by colour alone: the mark is square, the
+     word is spelled out beside it. */
+  .legend {
+    display: flex; gap: 26px; flex-wrap: wrap; align-items: center;
+    border-bottom: 1px solid var(--rule); padding: 11px 0; margin-bottom: 4px;
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-2); }
+  .legend i { width: 10px; height: 10px; flex: none; }
+  .legend .p { background: var(--pass); }
+  .legend .f { background: var(--fail); }
+  .legend .b { background: var(--blocked); }
+
+  /* ── Verdict words ─────────────────────────────────────────────────────
+     Set in caps and weight so they read without their colour. */
+  .badge {
+    font-size: 11px; font-weight: 700; letter-spacing: .12em;
+    text-transform: uppercase; font-family: var(--ui);
+  }
   .badge.passed, .badge.held_out, .badge.rolling, .badge.post_cutoff { color: var(--pass); }
   .badge.failed, .badge.pre_cutoff { color: var(--fail); }
   .badge.blocked, .badge.unknown { color: var(--blocked); }
   .badge.error { color: var(--fail); }
   .tag {
-    font-size: 10px; font-weight: 700; color: var(--blocked);
-    text-transform: uppercase; letter-spacing: .12em; margin-left: 6px;
+    font-size: 11px; font-weight: 700; color: var(--blocked);
+    text-transform: uppercase; letter-spacing: .12em; margin-left: 8px;
   }
 
-  /* Run list and case list: rows that open. */
-  tr.pick { cursor: pointer; }
-  tr.pick:hover td { background: var(--tint); }
-  tr.on td { background: var(--tint); }
+  /* ── Rows that open ────────────────────────────────────────────────────
+     Selection is a reversed left edge, not a fill wash. */
+  tr.pick { cursor: pointer; transition: background-color .15s; }
+  tr.pick:hover td { background: var(--panel); }
+  /* The selected row is marked once, on its leading edge — an inset rule on
+     every cell would draw a bar through the middle of the table. The left
+     gutter is always present so selecting a row shifts nothing. */
+  tr.on td { background: var(--plate); }
+  tr.on td:first-child { box-shadow: inset 3px 0 0 var(--ink); }
+
   .verdicts { margin: 0; padding: 0; list-style: none; font-size: 13px; }
-  .verdicts li { display: flex; gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--rule); }
+  .verdicts li { display: flex; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--rule); }
   .verdicts li:last-child { border-bottom: 0; }
-  .verdicts .mark { width: 58px; flex: none; font-size: 10px; font-weight: 700;
-    letter-spacing: .1em; text-transform: uppercase; padding-top: 3px; }
+  .verdicts .mark {
+    width: 62px; flex: none; font-size: 11px; font-weight: 700;
+    letter-spacing: .1em; text-transform: uppercase; padding-top: 2px;
+  }
   .verdicts .mark.p { color: var(--pass); }
   .verdicts .mark.f { color: var(--fail); }
   .verdicts .mark.b { color: var(--blocked); }
-  .open { background: var(--tint); padding: 16px 18px; }
-  .open h3 { margin-top: 14px; }
+  .open { background: var(--plate); padding: 18px 20px; border-left: 1px solid var(--rule-2); }
+  .open h3 { margin-top: 16px; }
   .open h3:first-child { margin-top: 0; }
 
-  fieldset { border: 0; border-top: 1px solid var(--rule); margin: 0; padding: 16px 0 0; }
-  label { font-size: 13px; color: var(--muted); display: inline-flex; gap: 7px; align-items: center; }
+  /* ── The form bed ──────────────────────────────────────────────────────
+     A second neutral layer, ruled rather than boxed. Fields are underlines,
+     so the only filled shape in the region is the primary action. */
+  fieldset { border: 0; background: var(--panel); margin: 0; padding: 20px; }
+  label { font-size: 11px; color: var(--ink-2); display: inline-flex; gap: 8px; align-items: center;
+          text-transform: uppercase; letter-spacing: .1em; font-weight: 700; }
+  .grid label { display: block; }
   input[type=text], input[type=number], select {
-    font: inherit; font-size: 13.5px; color: var(--ink); background: transparent;
-    border: 0; border-bottom: 1px solid var(--rule-2); padding: 2px 0; min-width: 80px;
+    font: inherit; font-size: 13px; font-family: var(--mono); color: var(--ink);
+    background: transparent; border: 0; border-bottom: 1px solid var(--rule-2);
+    padding: 5px 0; min-width: 84px; border-radius: 0; margin-top: 7px;
+    text-transform: none; letter-spacing: 0;
   }
-  input:focus, select:focus { outline: 0; border-bottom-color: var(--accent); }
-  select { min-width: 220px; }
-  .grid { display: flex; gap: 26px; flex-wrap: wrap; align-items: flex-end; }
+  input::placeholder { color: var(--ink-2); opacity: .7; }
+  input:focus, select:focus { outline: 0; border-bottom-color: var(--ink); }
+  input[type=checkbox] { accent-color: var(--ink); width: 13px; height: 13px; margin: 0; }
+  select { min-width: 230px; }
+  select option { background: var(--panel); color: var(--ink); }
+  .grid { display: flex; gap: 28px; flex-wrap: wrap; align-items: flex-end; }
+
+  @media (max-width: 720px) {
+    .certify { grid-template-columns: 1fr; }
+    .grade { border-bottom: 1px solid var(--ink); }
+    .grade .n { font-size: 46px; }
+    .wrap { padding: 0 16px 80px; }
+    /* The run form is the one region with intrinsic widths; stack it rather
+       than letting a 230px select push the page sideways. */
+    fieldset { padding: 16px; }
+    .grid { flex-direction: column; align-items: stretch; gap: 16px; }
+    .grid label { display: block; width: 100%; }
+    input[type=text], input[type=number], select { width: 100%; min-width: 0; }
+    .row { gap: 16px; }
+    .row label { width: auto; }
+    .primary { width: 100%; text-align: center; }
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <h1>Auto_Eval <span>&middot; runs</span></h1>
-    <span class="meta" id="meta"></span>
+    <div class="masthead">
+      <h1>Auto&#8209;Eval <span>&middot; certificate of calibration</span></h1>
+      <span class="meta" id="meta"></span>
+    </div>
   </header>
   <p class="sub">
     Every case in a suite, run against the provider and scored by its own checks. Tools are
@@ -209,10 +379,11 @@ function bar(tally) {
   const total = (tally.passed || 0) + (tally.failed || 0) + (tally.blocked || 0);
   if (!total) return "";
   const w = (n) => `${((n || 0) / total * 100).toFixed(1)}%`;
-  return `<div class="bar" title="${tally.passed} passed, ${tally.failed} failed, ${tally.blocked} blocked">
-    <i class="p" style="width:${w(tally.passed)}"></i>
-    <i class="f" style="width:${w(tally.failed)}"></i>
-    <i class="b" style="width:${w(tally.blocked)}"></i></div>`;
+  const share = (n) => `${Math.round((n || 0) / total * 100)}% of ${total}`;
+  return `<div class="bar">
+    <i class="p" style="width:${w(tally.passed)}" title="${tally.passed} passed — ${share(tally.passed)}"></i>
+    <i class="f" style="width:${w(tally.failed)}" title="${tally.failed} failed — ${share(tally.failed)}"></i>
+    <i class="b" style="width:${w(tally.blocked)}" title="${tally.blocked} blocked — ${share(tally.blocked)}"></i></div>`;
 }
 
 function tallyCell(tally) {
@@ -240,7 +411,9 @@ async function get(url) {
 async function boot() {
   try {
     health = await get("/api/health");
-    $("meta").textContent = `under test ${health.subject_model} · judge ${health.judge_model} · runs in ${health.runs_dir}`;
+    // "runs in runs" is what the plain wording produces when the directory is
+    // the default one; an arrow keeps the path readable whatever it is called.
+    $("meta").textContent = `under test ${health.subject_model} · judge ${health.judge_model} · runs → ${health.runs_dir}`;
     if (!health.has_key) {
       banner("warn", "No OPENAI_API_KEY found, so a real run cannot start. Tick 'mock' to exercise the harness offline, or add a key to your .env and restart.");
       $("mock").checked = true;
@@ -433,32 +606,51 @@ const FRESHNESS = {
 
 function figures(r) {
   const checks = r.overall.checks;
+  const graded = r.headline.passed + r.headline.failed;
+  const total = checks.passed + checks.failed + checks.blocked;
   const spend = r.usage.usd === null || r.usage.usd === undefined
     ? "not priced" : `$${r.usage.usd.toFixed(4)}`;
-  return `<div class="figures">
-    <div class="figure pass">
-      <div class="k">held out</div>
+  const tokens = r.usage.tokens === undefined
+    ? (r.usage.input_tokens + r.usage.output_tokens) : r.usage.tokens;
+
+  // The grade and what it excludes are one block, side by side. A pass rate
+  // that could be read without the blocked count beside it would be the
+  // marketing number this tool exists to refuse.
+  return `<div class="certify">
+    <div class="grade">
+      <div class="k">Pass rate &middot; held out</div>
       <div class="n">${pct(r.headline.pass_rate !== undefined ? r.headline.pass_rate : null)}</div>
-      <div class="d">${r.headline.passed} of ${r.headline.passed + r.headline.failed} graded run(s)<br>
+      <div class="d">${r.headline.passed} of ${graded} graded run(s)<br>
         ${r.headline.cases} case(s), ${r.samples} sample(s) each</div>
     </div>
-    <div class="figure">
-      <div class="k">checks settled</div>
-      <div class="n">${num(checks.passed + checks.failed)}</div>
-      ${bar(checks)}
-      <div class="d">${checks.passed} passed, ${checks.failed} failed</div>
+    <div class="disclose">
+      <div>
+        <div class="k">What this rate does not cover</div>
+        ${bar(checks)}
+        <span class="why">${checks.passed} passed &middot; ${checks.failed} failed &middot;
+          ${checks.blocked} blocked, of ${num(total)} check(s)</span>
+      </div>
+      <div class="excl">
+        <div class="blocked">
+          <b>${num(checks.blocked)}</b>
+          <span>check(s) could not run<br>listed in full below</span>
+        </div>
+        <div class="fail">
+          <b>${num(checks.failed)}</b>
+          <span>check(s) failed<br>of ${num(checks.passed + checks.failed)} settled</span>
+        </div>
+        <div class="cost">
+          <b>${num(tokens)}</b>
+          <span>tokens over ${r.overall.runs} run(s)<br>${spend} &middot; ${Math.round(r.seconds)}s wall clock</span>
+        </div>
+      </div>
     </div>
-    <div class="figure blocked">
-      <div class="k">could not be checked</div>
-      <div class="n">${num(checks.blocked)}</div>
-      <div class="d">of ${num(checks.passed + checks.failed + checks.blocked)} checks &mdash;
-        listed in full below</div>
-    </div>
-    <div class="figure">
-      <div class="k">cost</div>
-      <div class="n">${num(r.usage.tokens === undefined ? (r.usage.input_tokens + r.usage.output_tokens) : r.usage.tokens)}</div>
-      <div class="d">tokens over ${r.overall.runs} run(s)<br>${spend} &middot; ${Math.round(r.seconds)}s wall clock</div>
-    </div>
+  </div>
+
+  <div class="legend">
+    <span><i class="p"></i> passed &mdash; every check that ran on it passed</span>
+    <span><i class="f"></i> failed &mdash; a check ran and did not pass</span>
+    <span><i class="b"></i> blocked &mdash; the check needs a real environment; it did not run</span>
   </div>`;
 }
 
@@ -496,7 +688,7 @@ function blockedTable(r) {
     <tr><th class="num">Checks</th><th>Kind</th><th>Why not</th></tr>
     ${[...reasons.entries()].sort((a, b) => b[1].count - a[1].count).map(([reason, seen]) =>
       `<tr><td class="num">${seen.count}</td><td>${[...seen.kinds].map(words).join(", ")}</td>
-        <td>${esc(reason)}</td></tr>`).join("")}</table>`;
+        <td><span class="measure">${esc(reason)}</span></td></tr>`).join("")}</table>`;
 }
 
 function contaminationPanel(c) {
@@ -514,7 +706,7 @@ function contaminationPanel(c) {
         <td>${o.url ? `<a href="${esc(o.url)}" target="_blank" rel="noopener noreferrer">${esc(o.source)}</a>` : esc(o.source)}</td>
         <td class="num">${o.cases}</td>
         <td><span class="badge ${esc(o.verdict)}">${words(o.verdict)}</span></td>
-        <td class="why">${esc(o.why)}</td></tr>`).join("")}
+        <td class="why"><span class="measure">${esc(o.why)}</span></td></tr>`).join("")}
     </table>`;
 }
 
@@ -561,13 +753,18 @@ function caseDetail(c) {
 function renderReport() {
   const r = report;
   $("report").innerHTML = `
-    <h2>${esc(r.run_id)}</h2>
-    <p><strong>${esc(r.subject)}</strong> &middot; suite <code>${esc(r.suite_digest)}</code>
-      &middot; spec <code>${esc(r.spec_digest)}</code>
-      &middot; under test <code>${esc(r.model)}</code>
-      &middot; ${r.judge_model ? `judged by <code>${esc(r.judge_model)}</code>` : "no judge ran"}
+    <h2>${esc(r.subject)}
       ${r.mock ? '<span class="tag">mock</span>' : ""}
-      ${r.suite_verified ? "" : '<span class="tag">suite digest does not match</span>'}</p>
+      ${r.suite_verified ? "" : '<span class="tag">suite digest does not match</span>'}</h2>
+
+    <dl class="stamp">
+      <div><dt>Certificate</dt><dd>${esc(r.run_id)}</dd></div>
+      <div><dt>Instrument</dt><dd>${esc(r.model)}</dd></div>
+      <div><dt>Reference suite</dt><dd>${esc(r.suite_digest)}</dd></div>
+      <div><dt>Spec</dt><dd>${esc(r.spec_digest)}</dd></div>
+      <div><dt>Judge</dt><dd>${r.judge_model ? esc(r.judge_model) : "none ran"}</dd></div>
+      <div><dt>Measured</dt><dd>${esc((r.started_at || "").replace("T", " ").replace("+00:00", " UTC")) || "&mdash;"}</dd></div>
+    </dl>
 
     ${figures(r)}
 
