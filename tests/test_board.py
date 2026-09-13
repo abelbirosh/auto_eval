@@ -237,3 +237,86 @@ def test_an_unreadable_board_is_skipped_rather_than_breaking_the_list(tmp_path):
 def test_a_missing_board_says_so(tmp_path):
     with pytest.raises(BoardError, match="No board at"):
         load_board(tmp_path / "nope")
+
+
+def test_a_row_that_never_answers_is_wrong_not_excused():
+    """Setting it aside as an error would flatter the row by shrinking its denominator."""
+    from auto_eval.board import MAX_TOOL_STEPS
+
+    class NeverAnswers(FakeModel):
+        def create(self, **kwargs):
+            return _Obj(
+                choices=[
+                    _Obj(
+                        message=_Obj(
+                            content="Let me look again.",
+                            tool_calls=[
+                                _Obj(
+                                    id="c1",
+                                    function=_Obj(
+                                        name="web_search", arguments='{"query": "again"}'
+                                    ),
+                                )
+                            ],
+                        ),
+                        finish_reason="tool_calls",
+                    )
+                ],
+                usage=_Obj(prompt_tokens=30, completion_tokens=5),
+            )
+
+    cohort = parse_cohort(
+        COHORT.replace('"label": "Alpha", "configuration": "POST /search"',
+                       '"label": "Alpha", "kind": "model_with_tool", "configuration": "model + POST /search"')
+    )
+    built = run_board(
+        parse_dataset(ITEMS, name="news"), cohort, client=NeverAnswers(), http=FakeHTTP(), baseline=False
+    )
+    alpha = next(r for r in built.rows if r.label == "Alpha")
+    assert alpha.errors == 0            # the searches ran; the answering failed
+    assert alpha.accuracy == 0.0        # and that is a wrong answer
+    assert alpha.calls == 3 * MAX_TOOL_STEPS
+    assert "never answered" in alpha.verdicts[0].evidence
+
+
+def test_a_tool_row_that_answers_is_scored_on_the_answer():
+    class AnswersAfterOneSearch(FakeModel):
+        def __init__(self):
+            super().__init__()
+            self.searched = set()
+
+        def create(self, **kwargs):
+            question = kwargs["messages"][1]["content"]
+            if question in self.searched:
+                reply = ANSWERS[next(k for k in ANSWERS if k in question)]
+                return _Obj(
+                    choices=[_Obj(message=_Obj(content=reply, tool_calls=None), finish_reason="stop")],
+                    usage=_Obj(prompt_tokens=40, completion_tokens=6),
+                )
+            self.searched.add(question)
+            return _Obj(
+                choices=[
+                    _Obj(
+                        message=_Obj(
+                            content="",
+                            tool_calls=[
+                                _Obj(id="c1", function=_Obj(name="web_search", arguments="{}"))
+                            ],
+                        ),
+                        finish_reason="tool_calls",
+                    )
+                ],
+                usage=_Obj(prompt_tokens=40, completion_tokens=6),
+            )
+
+    cohort = parse_cohort(
+        COHORT.replace('"label": "Alpha", "configuration": "POST /search"',
+                       '"label": "Alpha", "kind": "model_with_tool", "configuration": "model + POST /search"')
+    )
+    built = run_board(
+        parse_dataset(ITEMS, name="news"), cohort,
+        client=AnswersAfterOneSearch(), http=FakeHTTP(), baseline=False,
+    )
+    alpha = next(r for r in built.rows if r.label == "Alpha")
+    assert alpha.accuracy == 1.0 and alpha.errors == 0
+    assert alpha.input_tokens > 0 and alpha.calls == 3  # one search per item

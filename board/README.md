@@ -5,18 +5,23 @@ question — **which of these systems is better at this job** — and the differ
 question changes the shape of everything else.
 
 ```bash
-auto-eval board examples/dataset-benchmark-facts.jsonl -c examples/cohort-tinyfish.json
+auto-eval board examples/dataset-benchmark-facts.jsonl -c examples/cohort-web-search.json
 auto-eval boards                       # what has been run
 auto-eval serve                        # or click "Run the board" on the page
 ```
 
+Rows whose key is not in the environment are reported as not run, so the same
+cohort file works whether you hold one vendor's key or six.
+
 A board is one dataset, many systems, one row each:
 
-| System | Endpoint & configuration | Accuracy | AR@1 | AR@5 | p50 | p95 | Errors | Total $ | $ / 1k correct |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| model only (no search) | the model answering from memory | 0.0% | — | — | 5.33s | 6.22s | 0 | — | — |
-| TinyFish search | GET api.search.tinyfish.ai | 80.0% | 20.0% | 80.0% | 964ms | 1.29s | 0 | $0.0000 | $0.0000 |
-| TinyFish search, model with tool | the model, with that endpoint as its only tool | 100.0% | — | — | 8.55s | 13.57s | 0 | $0.0076 | $1.5224 |
+| System | Endpoint & configuration | Accuracy | AR@1 | AR@5 | p50 | Total $ | $ / 1k correct |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Firecrawl | POST /v2/search limit=10 | 80.0% | 20.0% | 60.0% | 866ms | — | — |
+| Firecrawl, model with tool | the model, with that endpoint as its only tool | 60.0% | — | — | 10.40s | $0.0115 | $3.8260 |
+| model only (no search) | the model answering from memory | 0.0% | — | — | 2.84s | — | — |
+| TinyFish | GET api.search.tinyfish.ai | 80.0% | 20.0% | 80.0% | 315ms | $0.0000 | $0.0000 |
+| TinyFish, model with tool | the model, with that endpoint as its only tool | 100.0% | — | — | 7.80s | $0.0146 | $2.9144 |
 
 ## The row nobody asks for
 
@@ -104,6 +109,9 @@ unscored when there is none.
 
 - **An endpoint failure is an error, not a wrong answer.** Accuracy is over the
   items that came back, and the error count sits next to it.
+- **A run that searches until it runs out of searches is a wrong answer**, not an
+  error. The searches ran; what failed was the answering, and setting that aside
+  would flatter the row by shrinking its denominator.
 - **Spend is the published list price applied to the calls actually made.** A row
   with no price on file has blank cost columns rather than an estimate.
 - **A short board says it is short.** Under thirty items the ordering is a hint.

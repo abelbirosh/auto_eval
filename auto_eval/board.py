@@ -51,8 +51,9 @@ from .score import Summary, Verdict, percentile, score_hits, score_reply, summar
 # Items in flight per system. Vendors rate-limit; this is deliberately modest.
 DEFAULT_CONCURRENCY = 4
 
-# Steps a tool-using row is allowed before the item is abandoned.
-MAX_TOOL_STEPS = 6
+# Searches a tool-using row is allowed before the item is given up on. Eight is
+# room for a couple of reformulations, not room to wander.
+MAX_TOOL_STEPS = 8
 
 BOARD_FILENAME = "board.json"
 
@@ -238,10 +239,23 @@ def _ask(
     )
 
 
+class _ToolRun(BaseModel):
+    """What one tool-using item produced."""
+
+    reply: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    searches: int = 0
+    error: Optional[str] = None
+    exhausted: bool = Field(
+        default=False, description="True when it used every search and never answered."
+    )
+
+
 def _search_loop(
     client: Any, model: str, item: Item, system: System, http: Any
-) -> Tuple[str, int, int, int, Optional[str]]:
-    """The model with one endpoint as a tool. (reply, in, out, searches, error)."""
+) -> _ToolRun:
+    """The model with one endpoint as a tool, until it answers or runs out."""
     messages: List[Dict[str, Any]] = [
         {"role": "system", "content": TOOL_PROMPT},
         {"role": "user", "content": item.query},
@@ -258,7 +272,12 @@ def _search_loop(
                 max_completion_tokens=1200,
             )
         except Exception as exc:
-            return "", tokens_in, tokens_out, searches, f"{type(exc).__name__}: {exc}"
+            return _ToolRun(
+                input_tokens=tokens_in,
+                output_tokens=tokens_out,
+                searches=searches,
+                error=f"{type(exc).__name__}: {exc}",
+            )
 
         usage = getattr(completion, "usage", None)
         tokens_in += int(getattr(usage, "prompt_tokens", 0) or 0)
@@ -267,12 +286,11 @@ def _search_loop(
         message = completion.choices[0].message
         calls = getattr(message, "tool_calls", None) or []
         if not calls:
-            return (
-                (message.content or "").strip(),
-                tokens_in,
-                tokens_out,
-                searches,
-                None,
+            return _ToolRun(
+                reply=(message.content or "").strip(),
+                input_tokens=tokens_in,
+                output_tokens=tokens_out,
+                searches=searches,
             )
 
         messages.append(
@@ -310,7 +328,16 @@ def _search_loop(
                 }
             )
 
-    return "", tokens_in, tokens_out, searches, "The run never stopped searching."
+    # Out of searches with nothing to show. That is the system under test failing
+    # to answer, not the harness failing to run it, so it is scored as a wrong
+    # answer rather than set aside as an error - setting it aside would flatter
+    # the row by shrinking its denominator.
+    return _ToolRun(
+        input_tokens=tokens_in,
+        output_tokens=tokens_out,
+        searches=searches,
+        exhausted=True,
+    )
 
 
 class _Outcome(BaseModel):
@@ -346,18 +373,29 @@ def _run_item(
         )
         return _Outcome(verdict=verdict, calls=1)
 
+    exhausted = False
     if system.kind is SystemKind.MODEL_ONLY:
         reply, tokens_in, tokens_out, error = _ask(
             client, model, ANSWER_PROMPT, item.query
         )
         searches = 0
     else:
-        reply, tokens_in, tokens_out, searches, error = _search_loop(
-            client, model, item, system, http
-        )
+        run = _search_loop(client, model, item, system, http)
+        reply, tokens_in, tokens_out = run.reply, run.input_tokens, run.output_tokens
+        searches, error, exhausted = run.searches, run.error, run.exhausted
 
     elapsed = round(time.monotonic() - started, 3)
     verdict = score_reply(item.id, item.answers, reply, seconds=elapsed, error=error)
+    if exhausted:
+        verdict = verdict.model_copy(
+            update={
+                "evidence": f"used all {searches} search(es) and never answered",
+                "note": (
+                    "Counted as a wrong answer, not an error: the searches ran, and what "
+                    "failed was the answering."
+                ),
+            }
+        )
 
     # An item with no gold answer cannot be matched; a judge settles it, and only
     # if one was configured.
@@ -520,9 +558,12 @@ def _warnings(board: Board, dataset: Dataset) -> List[str]:
 
     skipped = [r for r in board.rows if r.skipped]
     if skipped:
+        # Labels only: the reason for each is in the "not run" table, and
+        # repeating a sentence per vendor buries the rest of this list.
         out.append(
             f"{len(skipped)} system(s) did not run and are not on the board: "
-            + "; ".join(f"{r.label} ({r.skipped})" for r in skipped)
+            + ", ".join(r.label for r in skipped)
+            + ". Each one's reason is listed under 'not run'."
         )
 
     erroring = [r for r in board.rows if r.n and r.errors / r.n > 0.1]

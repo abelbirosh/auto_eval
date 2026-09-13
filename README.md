@@ -111,15 +111,19 @@ auto-eval board items.jsonl -c cohort.json    # or "Run the board" on the page
 auto-eval boards
 ```
 
-| System | Endpoint & configuration | Accuracy | AR@1 | p50 | Total $ | $ / 1k correct |
-| --- | --- | --- | --- | --- | --- | --- |
-| model only (no search) | the model answering from memory | 0.0% | — | 5.33s | — | — |
-| TinyFish search | GET api.search.tinyfish.ai | 80.0% | 20.0% | 964ms | $0.0000 | $0.0000 |
-| TinyFish search, model with tool | the model, with that endpoint as its only tool | 100.0% | — | 8.55s | $0.0076 | $1.5224 |
+| System | Endpoint & configuration | Accuracy | AR@1 | AR@5 | p50 | Total $ | $ / 1k correct |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Firecrawl | POST /v2/search limit=10 | 80.0% | 20.0% | 60.0% | 866ms | — | — |
+| Firecrawl, model with tool | the model, with that endpoint as its only tool | 60.0% | — | — | 10.40s | $0.0115 | $3.8260 |
+| model only (no search) | the model answering from memory | 0.0% | — | — | 2.84s | — | — |
+| TinyFish | GET api.search.tinyfish.ai | 80.0% | 20.0% | 80.0% | 315ms | $0.0000 | $0.0000 |
+| TinyFish, model with tool | the model, with that endpoint as its only tool | 100.0% | — | — | 7.80s | $0.0146 | $2.9144 |
 
 The first row is the point. **Model only** is the same model with no endpoint at
 all: on items published after its training cutoff it should score near zero, and
-when it does, every other row is measuring retrieval rather than recall. What is
+when it does, every other row is measuring retrieval rather than recall. A vendor
+that prices in credits rather than per call has blank cost cells rather than a
+converted guess. What is
 held constant — the items, the model, the judge — is recorded on the board, rows
 are alphabetical because no single column decides the answer, and a vendor whose
 key is missing is reported as not run rather than scored as bad. [`board/`](board/)

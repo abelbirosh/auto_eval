@@ -1,28 +1,80 @@
 {
   "name": "web-search",
   "task": "factual lookup",
-  "model": "gpt-5-mini",
-  "judge_model": "gpt-5",
   "notes": [
-    "Every row is the vendor's own endpoint at its documented default page size.",
-    "Prices are the published pay-as-you-go list price, not a negotiated or promotional rate."
+    "Every row is the vendor's own search endpoint at its documented default page size, as configured on this file's `endpoint` block.",
+    "Prices are the vendor's published pay-as-you-go list price at the time of writing, not a negotiated or promotional rate. A vendor that prices in credits is left blank rather than converted at a plan rate we would have to guess at.",
+    "Rows whose key is not in the environment are reported as not run. They are still listed so it is obvious what was left out."
   ],
   "systems": [
     {
-      "label": "Exa fast",
+      "label": "Exa auto",
       "vendor": "Exa",
       "kind": "search_api",
-      "configuration": "POST /search type=fast",
-      "docs_url": "https://docs.exa.ai/reference/search",
+      "configuration": "POST /search type=auto, contents.highlights",
+      "docs_url": "https://docs.exa.ai/reference/search-api-guide-for-coding-agents",
       "endpoint": {
         "method": "POST",
         "url": "https://api.exa.ai/search",
         "headers": { "x-api-key": "${EXA_API_KEY}", "content-type": "application/json" },
-        "body": { "query": "{query}", "type": "fast", "numResults": 10, "contents": { "text": true } },
+        "body": {
+          "query": "{query}",
+          "type": "auto",
+          "numResults": 10,
+          "contents": { "highlights": true }
+        },
         "results_path": "results",
-        "fields": { "title": "title", "url": "url", "snippet": "text" }
+        "fields": { "title": "title", "url": "url", "snippet": "highlights" }
       },
-      "price": { "per_call_usd": 0.005, "note": "check the current rate on the pricing page", "source": "https://exa.ai/pricing" }
+      "price": {
+        "per_call_usd": 0.007,
+        "note": "$7 / 1k requests, up to 10 results",
+        "source": "https://exa.ai/docs/reference/pricing"
+      }
+    },
+    {
+      "label": "Exa fast",
+      "vendor": "Exa",
+      "kind": "search_api",
+      "configuration": "POST /search type=fast, contents.highlights",
+      "docs_url": "https://docs.exa.ai/reference/search-api-guide-for-coding-agents",
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.exa.ai/search",
+        "headers": { "x-api-key": "${EXA_API_KEY}", "content-type": "application/json" },
+        "body": {
+          "query": "{query}",
+          "type": "fast",
+          "numResults": 10,
+          "contents": { "highlights": true }
+        },
+        "results_path": "results",
+        "fields": { "title": "title", "url": "url", "snippet": "highlights" }
+      },
+      "price": {
+        "per_call_usd": 0.007,
+        "note": "$7 / 1k requests, up to 10 results",
+        "source": "https://exa.ai/docs/reference/pricing"
+      }
+    },
+    {
+      "label": "Firecrawl",
+      "vendor": "Firecrawl",
+      "kind": "search_api",
+      "configuration": "POST /v2/search limit=10",
+      "docs_url": "https://docs.firecrawl.dev/features/search",
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.firecrawl.dev/v2/search",
+        "headers": { "Authorization": "Bearer ${FIRECRAWL_API_KEY}", "content-type": "application/json" },
+        "body": { "query": "{query}", "limit": 10 },
+        "results_path": "data.web",
+        "fields": { "title": "title", "url": "url", "snippet": "description" }
+      },
+      "price": {
+        "note": "2 credits per 10 results; priced in credits, so convert at your own plan's rate rather than reading a dollar figure here",
+        "source": "https://www.firecrawl.dev/pricing"
+      }
     },
     {
       "label": "Tavily basic",
@@ -38,7 +90,10 @@
         "results_path": "results",
         "fields": { "title": "title", "url": "url", "snippet": "content" }
       },
-      "price": { "per_call_usd": 0.008, "note": "1 credit per basic search", "source": "https://tavily.com/#pricing" }
+      "price": {
+        "note": "1 credit per basic search; check the current dollar rate on the pricing page",
+        "source": "https://tavily.com/#pricing"
+      }
     },
     {
       "label": "Brave web search",
@@ -54,7 +109,26 @@
         "results_path": "web.results",
         "fields": { "title": "title", "url": "url", "snippet": "description" }
       },
-      "price": { "per_call_usd": 0.005, "note": "check the current rate on the pricing page", "source": "https://brave.com/search/api/" }
+      "price": {
+        "note": "check the current rate on the pricing page",
+        "source": "https://brave.com/search/api/"
+      }
+    },
+    {
+      "label": "TinyFish",
+      "vendor": "TinyFish",
+      "kind": "search_api",
+      "configuration": "GET api.search.tinyfish.ai",
+      "docs_url": "https://api.search.tinyfish.ai",
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.search.tinyfish.ai/",
+        "headers": { "X-API-Key": "${TINYFISH_API_KEY}" },
+        "params": { "query": "{query}" },
+        "results_path": "results",
+        "fields": { "title": "title", "url": "url", "snippet": "snippet" }
+      },
+      "price": { "per_call_usd": 0.0, "note": "free, with a published rate cap" }
     },
     {
       "label": "Exa fast, model with tool",
@@ -65,11 +139,61 @@
         "method": "POST",
         "url": "https://api.exa.ai/search",
         "headers": { "x-api-key": "${EXA_API_KEY}", "content-type": "application/json" },
-        "body": { "query": "{query}", "type": "fast", "numResults": 5, "contents": { "text": true } },
+        "body": {
+          "query": "{query}",
+          "type": "fast",
+          "numResults": 5,
+          "contents": { "highlights": true }
+        },
         "results_path": "results",
-        "fields": { "title": "title", "url": "url", "snippet": "text" }
+        "fields": { "title": "title", "url": "url", "snippet": "highlights" }
       },
-      "price": { "per_call_usd": 0.005, "per_million_input_usd": 0.25, "per_million_output_usd": 2.0, "note": "search calls plus model tokens" }
+      "price": {
+        "per_call_usd": 0.007,
+        "per_million_input_usd": 0.25,
+        "per_million_output_usd": 2.0,
+        "note": "$7 / 1k searches plus gpt-5-mini tokens at list price",
+        "source": "https://exa.ai/docs/reference/pricing"
+      }
+    },
+    {
+      "label": "Firecrawl, model with tool",
+      "vendor": "Firecrawl",
+      "kind": "model_with_tool",
+      "configuration": "the held-constant model, with POST /v2/search limit=5 as its only tool",
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.firecrawl.dev/v2/search",
+        "headers": { "Authorization": "Bearer ${FIRECRAWL_API_KEY}", "content-type": "application/json" },
+        "body": { "query": "{query}", "limit": 5 },
+        "results_path": "data.web",
+        "fields": { "title": "title", "url": "url", "snippet": "description" }
+      },
+      "price": {
+        "per_million_input_usd": 0.25,
+        "per_million_output_usd": 2.0,
+        "note": "search priced in credits (blank here); gpt-5-mini tokens at list price"
+      }
+    },
+    {
+      "label": "TinyFish, model with tool",
+      "vendor": "TinyFish",
+      "kind": "model_with_tool",
+      "configuration": "the held-constant model, with GET api.search.tinyfish.ai as its only tool",
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.search.tinyfish.ai/",
+        "headers": { "X-API-Key": "${TINYFISH_API_KEY}" },
+        "params": { "query": "{query}" },
+        "results_path": "results",
+        "fields": { "title": "title", "url": "url", "snippet": "snippet" }
+      },
+      "price": {
+        "per_call_usd": 0.0,
+        "per_million_input_usd": 0.25,
+        "per_million_output_usd": 2.0,
+        "note": "free search; gpt-5-mini tokens at list price"
+      }
     }
   ]
 }

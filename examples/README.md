@@ -5,7 +5,7 @@ Starting points, not results. Copy them, change the names, and point
 
 | File | What it is |
 | --- | --- |
-| [`cohort-web-search.json`](cohort-web-search.json) | Three search vendors and one tool-using row. Every row needs its own `${VENDOR}_API_KEY` in the environment; rows whose key is missing are reported as not run. |
+| [`cohort-web-search.json`](cohort-web-search.json) | Six vendor configurations — Exa (auto and fast), Firecrawl, Tavily, Brave, TinyFish — plus three rows that hand one of those endpoints to the model as a tool. Each row names the `${VENDOR}_API_KEY` it needs; rows whose key is missing are reported as not run, so the file works whether you hold one key or six. Request shapes and response paths are from each vendor's own documentation. |
 | [`cohort-tinyfish.json`](cohort-tinyfish.json) | One vendor, measured two ways: the endpoint alone, and the same endpoint handed to the model as a tool. |
 | [`dataset-benchmark-facts.jsonl`](dataset-benchmark-facts.jsonl) | Five facts about AI benchmarks, each published in 2025 — after the cutoff of the models this project defaults to, which is what makes the model-only row score zero. |
 | [`dataset-company-news.jsonl`](dataset-company-news.jsonl) | The shape to copy for your own items. The rows are placeholders; replace them with facts you can check. |
