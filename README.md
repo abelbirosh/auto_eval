@@ -1,114 +1,124 @@
-# auto_eval
+# Auto-Eval
 
-Builds evaluations for software and AI systems from a plain description of what
-you want tested.
+**Turn a description of what you want tested into a reproducible benchmark.**
 
-## Components
+Auto-Eval is an open-source system for automatically designing, building, running, and maintaining evaluation suites for software and AI systems.
 
-| | Component | Status |
-| --- | --- | --- |
-| 1 | [Classifier](classifier/) — free-form request → structured task spec | built |
-| 2 | [Ground truth identifier](ground_truth/) — find public baselines and labelled data, and say what is behind each link | built |
-| 3 | [Benchmark catalogue](auto_eval/benchmarks.py) — ten real public suites, matched onto a spec without a search | built |
-| 4 | [Agent suite builder](suite/) — profile an agent, then write the cases and the checks for it | built |
-| 5 | [Run infrastructure and dashboard](runner/) — run every case against the provider API, and show what the numbers are allowed to mean | built |
+Give it a goal like:
 
-Two more to come.
-
-```bash
-auto-eval benchmarks                    # the catalogue
-auto-eval benchmarks -s task.json       # the ones that fit your spec
-auto-eval profile -s task.json          # what it takes to run the agent, and whether we can
-auto-eval author  -s task.json -o suites/support-agent
-auto-eval suite   suites/support-agent  # read the written suite back
-auto-eval run     suites/support-agent  # run every case against the provider API
-auto-eval runs                          # what has been run
-auto-eval serve                         # the UI; the dashboard is at /dashboard
-auto-eval fresh --model gpt-5           # ground truth this model cannot have memorised
+```text
+Compare company enrichment APIs on accuracy, coverage, latency, and cost.
 ```
 
-Blocks 3 and 4 are both offline and deterministic: no API key, no network, same
-answer every time. A suite carries a digest over its own contents, so a number
-reported later can be traced to the exact cases that produced it.
+Auto-Eval turns that into:
 
-## Running a suite, and what the numbers mean
-
-Block 5 runs each case against the provider API with the agent's tools declared
-but answered inside the harness, so nothing touches a live system. That makes
-every trajectory check real — which tools were called, whether the run stopped
-on its own, whether it stayed inside its ceilings, whether it followed an
-instruction planted in a tool result — and it makes the end-state checks
-impossible, because the suite's fixtures are specifications rather than
-materialised environments.
-
-Those checks are therefore reported as **blocked**, by name and with the reason,
-rather than dropped. Dropping them is how "we could not check the end state"
-becomes "the end state was fine". Every pass rate in a report sits next to the
-count of what did not run, the headline is the held-out split, and a case whose
-every check was blocked comes back blocked rather than passed.
-
-```bash
-auto-eval run suites/support-agent --mock    # the whole path, no API call
-auto-eval run suites/support-agent --split held_out --samples 3
-auto-eval report runs/support-agent-20260912-174501
+```text
+Free-form request
+→ structured evaluation spec
+→ benchmark / ground-truth discovery
+→ cohort + test-case construction
+→ evaluation harness
+→ execution
+→ scoring
+→ comparison + reporting
 ```
 
-A run writes `runs/<run-id>/run.json`, the same report as a document, and one
-trace per run — the transcript each verdict was read off.
+## What it handles
 
-## The whole pipeline from the page
+* Extracts the system under test, KPIs, scope, and success criteria
+* Finds relevant public benchmarks, datasets, and baselines
+* Builds representative test cases and coverage matrices
+* Constructs or verifies ground truth when needed
+* Generates adapters for APIs, agents, CLIs, and model endpoints
+* Runs systems under identical conditions
+* Measures accuracy, coverage, latency, cost, tokens, and failures
+* Uses deterministic checks, LLM judges, or human review as appropriate
+* Produces versioned, auditable benchmark results
+* Re-runs benchmarks over time and detects regressions
 
-`auto-eval serve` and everything after the request is buttons. Type the request,
-answer whatever blocks, find the ground truth, and the page then offers **Run the
-benchmark**: one click writes the suite for that spec and runs every case, with
-progress as it goes and the scores in tables underneath — held-out rate, per-KPI,
-what could not be checked, the cases that did not pass, the contamination
-verdict. There is nothing to decide between authoring and running, so there is
-nothing to click between them either. A dry run needs no key at all.
+## Example
 
-Each result links through to `/dashboard?run=<run-id>`, which holds the same run
-in full: every verdict, and the transcript it was read off. The dashboard also
-lists every run on disk and can start its own. Local only, no authentication.
+```text
+"Compare Apollo, People Data Labs, Exa, and Parallel
+for company enrichment."
+```
 
-## Ground truth the model has not already seen
+Auto-Eval can produce:
 
-A public suite that predates the model measures two things at once — whether the
-agent can do the job, and whether the answers were in its training data — and
-after the fact there is no separating them. [`contamination.py`](auto_eval/contamination.py)
-holds published training cutoffs with the page each was read from, a catalogue
-of suites that resist contamination (answers never published, refreshed on a
-schedule, or simply released later), and the verdict for one suite: cases
+```text
+benchmark/
+├── spec.json
+├── methodology.md
+├── cohort.jsonl
+├── ground_truth.jsonl
+├── adapters/
+├── cases/
+├── scorers/
+├── raw_runs/
+└── results.json
+```
+
+## Design Principles
+
+**Deterministic where possible.**
+Models assist with extraction, research, and semantic judgment; rules handle validation, sampling, scoring, and aggregation where possible.
+
+**Evidence over confidence.**
+Ground truth and judgments retain their supporting evidence.
+
+**Ground truth ≠ scoring policy.**
+What is true and what counts as correct are stored separately.
+
+**Reproducible by default.**
+Specs, suites, cases, scoring rules, and results are versioned and content-addressed.
+
+## Running it
+
+Everything after the request is a button. `auto-eval serve` puts the pipeline on
+one page: describe what you want tested, answer whatever blocks, find the ground
+truth, then **Run the benchmark** — one click writes the suite for that spec and
+runs every case against the provider, with the scores underneath and a link
+through to `/dashboard` for every verdict and the transcript it was read off. A
+dry run needs no API key.
+
+The same steps from the command line:
+
+```bash
+auto-eval classify "..." --json task.json   # request → spec
+auto-eval ground-truth -s task.json         # what already exists publicly
+auto-eval author -s task.json -o suites/x   # the cases and their checks
+auto-eval run suites/x                      # run them; --mock calls no provider
+auto-eval serve                             # the UI, dashboard at /dashboard
+auto-eval fresh --model gpt-5               # ground truth this model cannot have memorised
+```
+
+A run's tools are declared to the model and answered inside the harness, so
+nothing touches a live system. That makes the trajectory checks real and the
+end-state checks impossible, so those are reported as **blocked, with the reason**
+rather than dropped — every pass rate sits next to the count of what did not run.
+[`runner/`](runner/) has the detail.
+
+## Contamination
+
+A public suite older than the model measures capability and recall at once. Every
+run report says which of its cases the model could already have seen: cases
 harvested from your own runs or generated from your spec are clean by
-construction, and a case adapted from a public suite is only as clean as that
-suite's publication date. Every run report carries that verdict; `auto-eval
-fresh --model <model>` prints the catalogue judged against one cutoff.
+construction, and one adapted from a public suite is only as clean as that
+suite's publication date. `auto-eval fresh` lists the ground truth that resists
+the problem — suites refreshed on a schedule, suites whose answers were never
+published — judged against a model's published cutoff.
 
-The catalogue is the deterministic counterpart to the ground-truth search: the
-model is good at finding something specific to your task and bad at reliably
-recalling whether a standard suite exists, so the standard suites are a lookup
-table. No API key, no network, same answer every time. It holds no scores — a
-stale leaderboard number is worse than none, so `analysis` quotes those from the
-live page instead.
+## Vision
 
-## Development
+Building a serious benchmark currently requires manual research, dataset design, integration work, scoring logic, and reporting.
 
-```bash
-pip install -e ".[dev,web]"
-pytest                     # the suite stubs the model client - no API key needed
-ruff check . && ruff format --check .
-mypy
+Auto-Eval aims to reduce that workflow to:
+
+```text
+Describe the evaluation
+→ inspect the methodology
+→ run the benchmark
+→ reproduce the result
 ```
 
-`pre-commit install` runs the ruff checks on each commit, so CI is rarely the
-first place a lint failure shows up.
-
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the same three
-commands on every push and pull request, tests on 3.10 and 3.14 - the ends of
-the supported range - and builds the wheel to check the CLI and the packaged UI
-still work from a clean install.
-
-Releases ([`.github/workflows/release.yml`](.github/workflows/release.yml)) are
-cut by pushing a `vX.Y.Z` tag that matches `version` in `pyproject.toml`; the
-built distributions are attached to a GitHub release. Publishing to PyPI is off
-until the repository variable `PUBLISH_TO_PYPI` is set to `true` and a trusted
-publisher is configured.
+**Auto-Eval is infrastructure for turning evaluation questions into evidence.**
