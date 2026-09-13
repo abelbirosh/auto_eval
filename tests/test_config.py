@@ -52,3 +52,32 @@ def test_dotenv_is_found_by_walking_up(tmp_path, monkeypatch):
 
     assert load_env(nested) == tmp_path / ".env"
     assert get_settings().model == "walked-up"
+
+
+def test_two_threads_starting_at_once_both_see_the_key(tmp_path, monkeypatch):
+    """The first caller used to set the flag before reading the file, and the
+    second sailed past it and concluded there was no key."""
+    import threading
+
+    from auto_eval import config
+
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-from-file\n", encoding="utf-8")
+    monkeypatch.setattr(config, "_ENV_LOADED", False)
+    monkeypatch.setattr(config, "_ENV_LOCK", threading.Lock())
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    seen = []
+    barrier = threading.Barrier(2)
+
+    def start():
+        barrier.wait()
+        seen.append(config.get_settings().has_key)
+
+    threads = [threading.Thread(target=start) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert seen == [True, True]
