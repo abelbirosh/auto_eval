@@ -66,9 +66,18 @@ def normalise(text: str) -> str:
 
 
 def contains(haystack: str, answer: str) -> bool:
-    """Whether `answer` appears in `haystack`, once both are normalised."""
+    """Whether `answer` appears in `haystack`, once both are normalised.
+
+    Matched at word boundaries, not as a bare substring. A gold answer of `43`
+    has to be the number 43 and not the tail of `143`, and the shorter and more
+    numeric the answer, the more that matters - which is exactly the shape most
+    gold answers take.
+    """
     needle = normalise(answer)
-    return bool(needle) and needle in normalise(haystack)
+    if not needle:
+        return False
+    pattern = rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])"
+    return re.search(pattern, normalise(haystack)) is not None
 
 
 def matches(text: str, answers: Sequence[str]) -> Optional[str]:

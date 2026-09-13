@@ -113,11 +113,14 @@ auto-eval boards
 
 | System | Endpoint & configuration | Accuracy | AR@1 | AR@5 | p50 | Total $ | $ / 1k correct |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Firecrawl | POST /v2/search limit=10 | 80.0% | 20.0% | 60.0% | 866ms | — | — |
-| Firecrawl, model with tool | the model, with that endpoint as its only tool | 60.0% | — | — | 10.40s | $0.0115 | $3.8260 |
-| model only (no search) | the model answering from memory | 0.0% | — | — | 2.84s | — | — |
-| TinyFish | GET api.search.tinyfish.ai | 80.0% | 20.0% | 80.0% | 315ms | $0.0000 | $0.0000 |
-| TinyFish, model with tool | the model, with that endpoint as its only tool | 100.0% | — | — | 7.80s | $0.0146 | $2.9144 |
+| Exa auto | POST /search type=auto | 100.0% | 80.0% | 100.0% | 1.27s | $0.0350 | $7.00 |
+| Exa fast | POST /search type=fast | 100.0% | 80.0% | 100.0% | 416ms | $0.0350 | $7.00 |
+| Exa fast, model with tool | the model, with that endpoint as its only tool | 80.0% | — | — | 7.39s | $0.1352 | $33.80 |
+| Firecrawl | POST /v2/search limit=10 | 80.0% | 20.0% | 60.0% | 944ms | — | — |
+| Firecrawl, model with tool | the model, with that endpoint as its only tool | 40.0% | — | — | 14.94s | $0.0160 | $7.99 |
+| model only (no search) | the model answering from memory | 0.0% | — | — | 2.88s | — | — |
+| TinyFish | GET api.search.tinyfish.ai | 100.0% | 20.0% | 100.0% | 689ms | $0.0000 | $0.0000 |
+| TinyFish, model with tool | the model, with that endpoint as its only tool | 100.0% | — | — | 9.10s | $0.0058 | $1.16 |
 
 The first row is the point. **Model only** is the same model with no endpoint at
 all: on items published after its training cutoff it should score near zero, and

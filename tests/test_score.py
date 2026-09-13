@@ -106,3 +106,17 @@ def test_percentiles_need_no_interpolation_argument():
     assert percentile([1, 2, 3, 4, 5], 0.5) == 3
     assert percentile([1, 2, 3, 4, 5], 0.95) == 5
     assert percentile([], 0.5) is None
+
+
+def test_a_number_is_matched_as_a_number_not_as_a_substring():
+    """A gold answer of 43 must not be found inside 143."""
+    assert contains("Tier 4 contains 43 problems", "43")
+    assert not contains("the set has 143 problems", "43")
+    assert not contains("scored 293.9% somehow", "93.9%")
+    assert contains("saturated at 93.9% (congrats)", "93.9%")
+
+
+def test_word_boundaries_do_not_break_ordinary_answers():
+    assert contains("opened an office in Lisbon, Portugal", "Lisbon")
+    assert contains("released on March 24, 2025.", "March 24, 2025")
+    assert not contains("Lisbonne is a different city", "Lisbon")
