@@ -528,16 +528,45 @@ def test_a_cohort_that_is_not_one_is_a_readable_error(tmp_path, capsys):
 
 
 def test_boards_lists_what_was_written(tmp_path, capsys):
-    from auto_eval.board import write_board
-    from tests.test_board import board as build_board
+    """Built here rather than run: this is about the listing, not the running."""
+    from auto_eval.board import Board, Row, write_board
+    from auto_eval.cohort import SystemKind
+    from auto_eval.score import Verdict
 
-    write_board(build_board(), tmp_path / "boards")
+    board = Board(
+        board_id="vendors-20260101-000000",
+        started_at="2026-01-01T00:00:00+00:00",
+        task="factual lookup",
+        dataset="news",
+        dataset_digest="deadbeefdeadbeef",
+        items=3,
+        rows=[
+            Row(
+                label="Alpha",
+                n=3,
+                correct=3,
+                verdicts=[
+                    Verdict(item_id=str(i), correct=True, rank=1) for i in range(3)
+                ],
+            ),
+            Row(
+                label="model only (no search)",
+                kind=SystemKind.MODEL_ONLY,
+                n=3,
+                correct=0,
+                verdicts=[Verdict(item_id=str(i)) for i in range(3)],
+            ),
+        ],
+    )
+    write_board(board, tmp_path / "boards")
+
     assert (
         main(["boards", "--dir", str(tmp_path / "boards"), "--format", "json"])
         == EXIT_OK
     )
     listed = json.loads(capsys.readouterr().out)
-    assert listed[0]["items"] == 3 and listed[0]["baseline_accuracy"] is not None
+    assert listed[0]["items"] == 3
+    assert listed[0]["leader"] == "Alpha" and listed[0]["baseline_accuracy"] == 0.0
 
 
 def test_boards_says_so_when_there_are_none(tmp_path, capsys):
@@ -552,10 +581,13 @@ def test_the_example_cohort_and_dataset_that_ship_with_the_repo_are_readable():
     from auto_eval.cohort import load as load_cohort
     from auto_eval.dataset import load as load_dataset
 
-    cohort = load_cohort(Path("examples/cohort-web-search.json"))
+    # Resolved from this file, not from the working directory: the examples are
+    # part of the repository, not of wherever pytest happened to be started.
+    examples = Path(__file__).resolve().parent.parent / "examples"
+    cohort = load_cohort(examples / "cohort-web-search.json")
     assert len(cohort.systems) >= 3
     assert all(s.endpoint and s.endpoint.secrets() for s in cohort.systems)
 
-    dataset = load_dataset(Path("examples/dataset-benchmark-facts.jsonl"))
+    dataset = load_dataset(examples / "dataset-benchmark-facts.jsonl")
     assert len(dataset.items) >= 3
     assert all(item.answers and item.published for item in dataset.items)

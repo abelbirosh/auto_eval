@@ -254,7 +254,8 @@ def test_a_row_that_never_answers_is_wrong_not_excused():
                                 _Obj(
                                     id="c1",
                                     function=_Obj(
-                                        name="web_search", arguments='{"query": "again"}'
+                                        name="web_search",
+                                        arguments='{"query": "again"}',
                                     ),
                                 )
                             ],
@@ -266,15 +267,21 @@ def test_a_row_that_never_answers_is_wrong_not_excused():
             )
 
     cohort = parse_cohort(
-        COHORT.replace('"label": "Alpha", "configuration": "POST /search"',
-                       '"label": "Alpha", "kind": "model_with_tool", "configuration": "model + POST /search"')
+        COHORT.replace(
+            '"label": "Alpha", "configuration": "POST /search"',
+            '"label": "Alpha", "kind": "model_with_tool", "configuration": "model + POST /search"',
+        )
     )
     built = run_board(
-        parse_dataset(ITEMS, name="news"), cohort, client=NeverAnswers(), http=FakeHTTP(), baseline=False
+        parse_dataset(ITEMS, name="news"),
+        cohort,
+        client=NeverAnswers(),
+        http=FakeHTTP(),
+        baseline=False,
     )
     alpha = next(r for r in built.rows if r.label == "Alpha")
-    assert alpha.errors == 0            # the searches ran; the answering failed
-    assert alpha.accuracy == 0.0        # and that is a wrong answer
+    assert alpha.errors == 0  # the searches ran; the answering failed
+    assert alpha.accuracy == 0.0  # and that is a wrong answer
     assert alpha.calls == 3 * MAX_TOOL_STEPS
     assert "never answered" in alpha.verdicts[0].evidence
 
@@ -290,7 +297,12 @@ def test_a_tool_row_that_answers_is_scored_on_the_answer():
             if question in self.searched:
                 reply = ANSWERS[next(k for k in ANSWERS if k in question)]
                 return _Obj(
-                    choices=[_Obj(message=_Obj(content=reply, tool_calls=None), finish_reason="stop")],
+                    choices=[
+                        _Obj(
+                            message=_Obj(content=reply, tool_calls=None),
+                            finish_reason="stop",
+                        )
+                    ],
                     usage=_Obj(prompt_tokens=40, completion_tokens=6),
                 )
             self.searched.add(question)
@@ -300,7 +312,10 @@ def test_a_tool_row_that_answers_is_scored_on_the_answer():
                         message=_Obj(
                             content="",
                             tool_calls=[
-                                _Obj(id="c1", function=_Obj(name="web_search", arguments="{}"))
+                                _Obj(
+                                    id="c1",
+                                    function=_Obj(name="web_search", arguments="{}"),
+                                )
                             ],
                         ),
                         finish_reason="tool_calls",
@@ -310,12 +325,17 @@ def test_a_tool_row_that_answers_is_scored_on_the_answer():
             )
 
     cohort = parse_cohort(
-        COHORT.replace('"label": "Alpha", "configuration": "POST /search"',
-                       '"label": "Alpha", "kind": "model_with_tool", "configuration": "model + POST /search"')
+        COHORT.replace(
+            '"label": "Alpha", "configuration": "POST /search"',
+            '"label": "Alpha", "kind": "model_with_tool", "configuration": "model + POST /search"',
+        )
     )
     built = run_board(
-        parse_dataset(ITEMS, name="news"), cohort,
-        client=AnswersAfterOneSearch(), http=FakeHTTP(), baseline=False,
+        parse_dataset(ITEMS, name="news"),
+        cohort,
+        client=AnswersAfterOneSearch(),
+        http=FakeHTTP(),
+        baseline=False,
     )
     alpha = next(r for r in built.rows if r.label == "Alpha")
     assert alpha.accuracy == 1.0 and alpha.errors == 0
