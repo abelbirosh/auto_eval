@@ -98,6 +98,42 @@ def test_ground_truth_report_renders_sources_and_verdict(full_spec):
     assert "for comparison, not scoring" in md
 
 
+def test_a_self_reported_source_says_so_on_its_face(full_spec):
+    from auto_eval.ground_truth import (
+        Access,
+        ExternalSource,
+        Fit,
+        SourceFindings,
+        SourceKind,
+        assess,
+    )
+    from auto_eval.render import render_ground_truth
+
+    spec = full_spec.model_copy(
+        update={"summary": "Compare Apollo and Clearbit on field accuracy."}
+    )
+    md = render_ground_truth(
+        assess(
+            spec,
+            SourceFindings(
+                sources=[
+                    ExternalSource(
+                        name="Apollo docs",
+                        kind=SourceKind.VENDOR_CLAIM,
+                        url="https://docs.apollo.io/reference",
+                        description="What the enrichment endpoint returns.",
+                        fit=Fit.CONTEXTUAL,
+                        access=Access.OPEN,
+                    )
+                ],
+                recommendation="Label a sample.",
+            ),
+        )
+    )
+    assert "**self-reported**" in md
+    assert "nothing here can score the system that wrote it" in md
+
+
 def test_an_empty_report_says_so_rather_than_rendering_blank(sparse_spec):
     from auto_eval.ground_truth import SourceFindings, assess
     from auto_eval.render import render_ground_truth

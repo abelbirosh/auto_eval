@@ -133,6 +133,17 @@ unscored when there is none.
 
 A spec whose subject is an endpoint, a model, or a retrieval API has no
 trajectory, so the classifier page offers a board instead of a suite: paste the
-items, paste or point at the cohort, and click **Run the board**. Results render
-as the table above, with the baseline, the contamination verdict and every item's
-evidence one click down.
+items, paste or point at the cohort, and click **Run the board**. Which subjects
+have a trajectory is read from `/api/health`, so the form on the page and the
+gate on the server cannot drift apart and offer you a suite the server then
+refuses to write.
+
+The systems are filled in for you where the page can tell who they are. The
+ground-truth search marks the sources published by a system under test — it has
+to, because a vendor cannot be the ground truth for its own score — and that is
+also the most reliable list of who is being compared, so each one arrives as a
+row with its docs link, its `${VENDOR_API_KEY}`, and an empty endpoint URL to
+fill in. A row still holding that empty URL is reported as **not run** with the
+reason and the link, exactly like a row whose key is missing: it is never called
+and never scored. What is still missing — items, endpoints, unreadable JSON — is
+listed under the button before you press it rather than after.

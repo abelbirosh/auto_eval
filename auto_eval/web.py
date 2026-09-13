@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
+from .agent import AGENTIC_KINDS
 from .analysis import AnalysisReport, analyze_sources
 from .board import (
     Board,
@@ -425,6 +426,10 @@ def create_app():
             "subject_model": settings.effective_subject_model,
             "judge_model": settings.effective_judge_model,
             "runs_dir": str(settings.effective_runs_dir),
+            # Which subjects have a trajectory is the gate's decision, so the
+            # page reads it from here rather than keeping its own copy: the two
+            # disagreeing is how you end up offering a suite the gate refuses.
+            "agentic_kinds": sorted(kind.value for kind in AGENTIC_KINDS),
         }
 
     @app.get("/api/suites", response_model=List[SuiteEntry])

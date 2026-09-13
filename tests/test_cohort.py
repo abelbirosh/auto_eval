@@ -82,6 +82,20 @@ def test_a_row_that_needs_an_endpoint_and_has_none_is_not_runnable():
     assert not ok and "no endpoint" in why
 
 
+def test_a_row_whose_endpoint_is_still_a_skeleton_is_not_runnable():
+    # The starter cohort the page writes has the shape but not the address. It
+    # has to read as not run, or the vendor is called, fails, and scores zero.
+    row = System(
+        label="Apollo",
+        kind=SystemKind.SEARCH_API,
+        docs_url="https://docs.apollo.io/reference",
+        endpoint=Endpoint(url="  "),
+    )
+    ok, why = row.readiness()
+    assert not ok
+    assert "no endpoint URL" in why and "docs.apollo.io" in why
+
+
 def test_the_baseline_is_added_once_and_only_once():
     cohort = with_baseline(parse(COHORT))
     assert cohort.baseline is not None

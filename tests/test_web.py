@@ -24,6 +24,10 @@ def test_index_serves_the_page(client):
     # The page posts answers back and gates the button on them being filled.
     assert "submitAnswers" in response.text
     assert "still to answer" in response.text
+    # Which benchmark the page offers is the gate's decision, read from health.
+    assert "healthState.agentic_kinds" in response.text
+    # A source the identifier marked as self-reported says so where it is listed.
+    assert "published by a system under test" in response.text
 
 
 def test_health_reports_key_and_model(client, monkeypatch):
@@ -41,6 +45,9 @@ def test_health_reports_key_and_model(client, monkeypatch):
         "subject_model": "m",
         "judge_model": "m",
         "runs_dir": "runs",
+        # The page branches between a suite and a board on this, so it comes
+        # from the gate rather than from a copy of the list in the JavaScript.
+        "agentic_kinds": ["agent", "workflow"],
     }
 
 

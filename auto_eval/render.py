@@ -223,7 +223,8 @@ def render_ground_truth(report: GroundTruthReport) -> str:
                 f"`{source.kind.value}` · fit {source.fit.value} · access {source.access.value}"
                 + (f" · published {source.released}" if source.released else "")
                 + (f" · {source.licence}" if source.licence else "")
-                + (f" · {source.publisher}" if source.publisher else ""),
+                + (f" · {source.publisher}" if source.publisher else "")
+                + (" · **self-reported**" if source.self_reported else ""),
                 "",
                 source.description,
                 "",
@@ -243,6 +244,12 @@ def render_ground_truth(report: GroundTruthReport) -> str:
                         f"{value.as_of or '—'} |"
                     )
                 lines.append("")
+            if source.self_reported:
+                lines += [
+                    "Published by a system under test, so it is context and not "
+                    "ground truth: nothing here can score the system that wrote it.",
+                    "",
+                ]
             if source.caveats:
                 lines += [f"Caveat: {source.caveats}", ""]
 
@@ -304,7 +311,8 @@ def render_analysis(analysis: AnalysisReport) -> str:
             "",
             f"`{item.kind.value}` · {REACH_MARK[item.reachability]} · "
             f"{USABILITY_MARK[item.usability]}"
-            + (f" · effort {item.effort.value}" if item.effort else ""),
+            + (f" · effort {item.effort.value}" if item.effort else "")
+            + (" · **self-reported**" if item.self_reported else ""),
             "",
             f"<{item.url}>",
             "",

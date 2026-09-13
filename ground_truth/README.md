@@ -85,6 +85,31 @@ A source's `fit` is judged against this subject: `direct` (same task, same
 metric), `adaptable` (needs a subset or a reformat), `contextual` (a reference
 point only).
 
+## A system cannot be the ground truth for its own score
+
+Ask for a comparison of four named vendors and a web search will hand back four
+vendor documentation sites, because that is what ranks. Their own pages are
+evidence about what their API returns and what it charges. They are not evidence
+about whether it is right, and on a comparison every vendor on the list is a
+party to the result.
+
+So each source is checked against what the spec says it is testing — the
+registrable name in the URL, and the publisher — and one published by a system
+under test is marked `self_reported`. The mark is computed in `assess()` from
+the spec, never taken from the model, and it has teeth:
+
+- the source is **left out of the KPI coverage and the verdict**, so four vendor
+  pages read as `reference_only` rather than `published_baselines`;
+- it is still listed, with its numbers, labelled on its face in the report, the
+  document, and the page — a vendor's own figure is worth knowing, as long as
+  nobody mistakes it for the measurement;
+- the analysis stage will not promote it to `ground_truth` however the page
+  reads, and adds the caveat.
+
+Hosts that publish other people's work — GitHub, Hugging Face, arXiv, Wikipedia
+and the like — are exempt, so a benchmark repository is not demoted for living
+on a site the spec happens to name.
+
 ## What the analysis returns
 
 One `ResourceAnalysis` per source:

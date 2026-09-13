@@ -517,6 +517,10 @@ const table = (headers, rows) => `<div class="scroll"><table>
 
 function renderReport(data) {
   const r = data.report;
+  // Set before anything is built: the benchmark form below is written from this
+  // report - which datasets were found, which systems are under test - and was
+  // otherwise being built from the previous search, or from nothing at all.
+  lastReport = r;
 
   const coverage = r.kpi_coverage.length
     ? table(["KPI", "What exists", "Sources"], r.kpi_coverage.map(k =>
@@ -527,7 +531,8 @@ function renderReport(data) {
   const sources = r.sources.length
     ? table(["Source", "Kind", "Fit", "Access", "Published", "Covers", "Baselines"],
         r.sources.map(src => [
-          link(src.url, src.name),
+          link(src.url, src.name) + (src.self_reported
+            ? `<br><span class="why">self-reported &mdash; published by a system under test</span>` : ""),
           cell(src.kind),
           cell(src.fit),
           cell(src.access),
@@ -542,6 +547,8 @@ function renderReport(data) {
         <span class="meta">${src.publisher ? esc(src.publisher) : ""}${
           src.licence ? " &middot; " + esc(src.licence) : ""}</span></div>
       <p>${esc(src.description)}</p>
+      ${src.self_reported ? `<p class="why">Published by a system under test, so it is context and not
+        ground truth: nothing here can score the system that wrote it.</p>` : ""}
       ${src.baselines.length ? table(["Metric", "Value", "System", "As of"],
         src.baselines.map(b => [esc(b.metric), esc(b.value), cell(b.system), cell(b.as_of)])) : ""}
       ${src.caveats ? `<p class="why">Caveat: ${esc(src.caveats)}</p>` : ""}
@@ -577,7 +584,6 @@ function renderReport(data) {
 
     ${benchmarkForm()}`;
 
-  lastReport = r;
   $("exresult").hidden = true;
   $("runresult").hidden = true;
   const exBtn = $("ex");
@@ -593,7 +599,9 @@ function renderAnalysis(data) {
   const resources = a.resources.length
     ? table(["Source", "Link", "Reachable", "What is behind it", "Effort", "To fetch later"],
         a.resources.map(r => [
-          esc(r.source) + (r.covers_kpis.length ? `<br><span class="why">${esc(r.covers_kpis.join(", "))}</span>` : ""),
+          esc(r.source)
+            + (r.self_reported ? `<br><span class="why">self-reported</span>` : "")
+            + (r.covers_kpis.length ? `<br><span class="why">${esc(r.covers_kpis.join(", "))}</span>` : ""),
           link(r.url, host(r.url)),
           esc(REACH[r.reachability] || r.reachability),
           esc(USABILITY[r.usability] || r.usability),
@@ -682,33 +690,111 @@ async function runAnalyze() {
 // it gets a suite of cases and is scored on what it did. An endpoint or a model
 // has no trajectory: what you want to know is which of several systems answers
 // the same questions best, which is a board.
+//
+// Which is which is the gate's decision, so it is read from /api/health rather
+// than held as a second opinion here: the two disagreeing is how you end up
+// being offered a suite the server then refuses to write. The list below is the
+// fallback for when health could not be reached.
 const AGENTIC = ["agent", "workflow"];
-const isAgentic = () => lastSpec && AGENTIC.includes(lastSpec.subject.kind);
+const agenticKinds = () => (healthState && healthState.agentic_kinds) || AGENTIC;
+const isAgentic = () => lastSpec && agenticKinds().includes(lastSpec.subject.kind);
+
+const slug = (text) => (text || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+const envVar = (label) => "${" + (label || "vendor").toUpperCase().replace(/[^A-Z0-9]+/g, "_") + "_API_KEY}";
+const hostName = (url) => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return ""; } };
+const titleCase = (word) => word ? word[0].toUpperCase() + word.slice(1) : "";
+const vendorName = (src) => src.publisher || titleCase(hostName(src.url).split(".").slice(-2)[0]) || src.name;
+
+// A row per system the comparison is actually about. The ground-truth search
+// already had to find and discard those vendors' own pages - a vendor page
+// cannot score the vendor that wrote it - and that discard pile is the most
+// reliable list of who is under test that this page has.
+function rowFor(name, docs) {
+  return {
+    label: name,
+    vendor: name,
+    kind: "search_api",
+    configuration: "",
+    docs_url: docs || null,
+    endpoint: {
+      method: "POST",
+      url: "",
+      headers: { "x-api-key": envVar(name), "content-type": "application/json" },
+      body: { query: "{query}" },
+      results_path: "results",
+      fields: { title: "title", url: "url", snippet: "text" }
+    },
+    price: { note: "the vendor's published list price, per call" },
+    note: "Fill in url, body, and results_path from the vendor's docs; the row is reported as not run until you do."
+  };
+}
+
+function underTest() {
+  const own = lastReport ? lastReport.sources.filter(s => s.self_reported) : [];
+  const rows = [];
+  own.forEach(src => {
+    const name = vendorName(src);
+    if (name && !rows.some(r => r.label.toLowerCase() === name.toLowerCase())) {
+      rows.push(rowFor(name, src.url));
+    }
+  });
+  return rows;
+}
 
 function starterCohort() {
   const model = (healthState && healthState.subject_model) || "gpt-5-mini";
+  const systems = underTest();
   return JSON.stringify({
-    name: (lastSpec && lastSpec.subject.name ? lastSpec.subject.name : "cohort")
-      .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
+    name: slug(lastSpec && lastSpec.subject.name) || "cohort",
     task: lastSpec && lastSpec.subject.in_scope && lastSpec.subject.in_scope.length
       ? lastSpec.subject.in_scope[0] : "factual lookup",
     model,
-    systems: [{
-      label: "Vendor A",
-      vendor: "Vendor A",
-      kind: "search_api",
-      configuration: "POST /search",
-      endpoint: {
-        method: "POST",
-        url: "https://api.vendor-a.example/search",
-        headers: { "x-api-key": "${VENDOR_A_API_KEY}" },
-        body: { query: "{query}", numResults: 10 },
-        results_path: "results",
-        fields: { title: "title", url: "url", snippet: "text" }
-      },
-      price: { per_call_usd: 0.005, note: "$5 / 1k", source: "https://vendor-a.example/pricing" }
-    }]
+    systems: systems.length ? systems : [rowFor("Vendor A", null)]
   }, null, 2);
+}
+
+// What the run is still short of, worked out from the form rather than from a
+// failed request. Counting it here is the difference between "run it and find
+// out" and knowing what to fill in first.
+function boardShortfall() {
+  const missing = [];
+  const items = ($("b-items").value.trim() ? $("b-items").value.trim().split(/\n+/).filter(Boolean).length : 0);
+  const itemsPath = $("b-items-path").value.trim();
+  if (!items && !itemsPath) {
+    missing.push("no items yet - paste rows with their known answers, or name a file");
+  }
+  const cohortPath = $("b-cohort-path").value.trim();
+  if (!cohortPath) {
+    try {
+      const parsed = JSON.parse($("b-cohort").value);
+      const systems = parsed.systems || parsed || [];
+      const unfilled = systems.filter(sys => sys.kind !== "model_only"
+        && (!sys.endpoint || !String(sys.endpoint.url || "").trim()));
+      if (unfilled.length) {
+        missing.push(`${unfilled.length} of ${systems.length} row(s) have no endpoint URL: `
+          + unfilled.map(sys => sys.label).join(", "));
+      }
+    } catch (e) {
+      missing.push(`the systems are not readable JSON: ${e.message}`);
+    }
+  }
+  return { missing, items, ready: !missing.length };
+}
+
+function showShortfall() {
+  const hint = $("test-hint");
+  if (!hint || isAgentic()) return;
+  const state = boardShortfall();
+  if (state.ready) {
+    hint.textContent = `${state.items ? state.items + " item(s)" : "items from the file"} - ready to run`;
+    return;
+  }
+  const baseline = $("b-baseline") && $("b-baseline").checked;
+  hint.innerHTML = `<span class="why">Still missing: ${esc(state.missing.join("; "))}.`
+    + (state.items && baseline
+      ? " The model-only row runs without any of it, and every other row is reported as not run with the reason."
+      : "")
+    + "</span>";
 }
 
 function benchmarkForm() {
@@ -777,6 +863,11 @@ function wireBenchmark() {
     const mock = $("b-mock");
     if (mock) mock.checked = true;
   }
+  if (!isAgentic()) {
+    ["b-items", "b-items-path", "b-cohort", "b-cohort-path", "b-baseline"]
+      .forEach(id => { const el = $(id); if (el) el.oninput = el.onchange = showShortfall; });
+    showShortfall();
+  }
 }
 
 async function board() {
@@ -803,7 +894,11 @@ async function board() {
       body: JSON.stringify(body),
     });
     const job = await r.json();
-    if (!r.ok) { banner("err", job.detail || `Could not start (${r.status})`); return; }
+    if (!r.ok) {
+      banner("err", job.detail || `Could not start (${r.status})`);
+      showShortfall();
+      return;
+    }
     hint.textContent = `${job.systems} system(s) x ${job.cases} item(s) \u2014 starting\u2026`;
     await pollBoard(job);
   } catch (e) {
