@@ -137,6 +137,14 @@ class ExternalSource(BaseModel):
     licence: Optional[str] = Field(
         default=None, description="Licence or terms, if stated."
     )
+    released: Optional[str] = Field(
+        default=None,
+        description=(
+            "When the data was published, as the page states it; a year is enough. "
+            "Null when the page does not say - a guessed date is worse than none, "
+            "because this is what decides whether a score is measurement or recall."
+        ),
+    )
     baselines: List[BaselineValue] = Field(default_factory=list)
     caveats: Optional[str] = Field(
         default=None, description="Why it might not transfer: age, domain, saturation."
@@ -311,6 +319,14 @@ def _clean_sources(
     if dropped:
         notes.append(
             f"Dropped {dropped} source(s) with no usable link - a source that cannot be opened cannot be checked."
+        )
+    undated = [s.name for s in kept if not s.released]
+    if undated:
+        notes.append(
+            f"{len(undated)} source(s) carry no publication date: "
+            + ", ".join(undated)
+            + ". Find out when each was published before quoting a score from it - anything "
+            "released before the model's training cutoff may already be in its training data."
         )
     if len(kept) > MAX_SOURCES:
         notes.append(f"Showing the first {MAX_SOURCES} of {len(kept)} sources found.")

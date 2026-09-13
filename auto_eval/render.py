@@ -7,7 +7,9 @@ from typing import List, Optional
 from .agent import AgentProfile, RunMode
 from .analysis import AnalysisReport, Reachability, Usability
 from .authoring import Case, CaseSource, needs_fixture
+from .contamination import Cutoff, Freshness, FreshSource, fresh_by_verdict
 from .ground_truth import Availability, Coverage, Gate, GroundTruthReport
+from .runner import CaseStatus, Group, RunReport, Score, Tally
 from .schema import EvidenceStatus, Readiness, TaskSpec
 from .suite import Split, Suite, kpi_coverage
 from .surface import CellStatus, CoverageMatrix
@@ -218,6 +220,7 @@ def render_ground_truth(report: GroundTruthReport) -> str:
                 f"### {source.name}",
                 "",
                 f"`{source.kind.value}` · fit {source.fit.value} · access {source.access.value}"
+                + (f" · published {source.released}" if source.released else "")
                 + (f" · {source.licence}" if source.licence else "")
                 + (f" · {source.publisher}" if source.publisher else ""),
                 "",
@@ -573,6 +576,226 @@ def render_suite(suite: Suite) -> str:
     return "\n".join(lines)
 
 
+# --------------------------------------------------------------------------
+# A run
+# --------------------------------------------------------------------------
+
+FRESHNESS_BLURB = {
+    Freshness.HELD_OUT: "answers never published - a score here cannot be recall",
+    Freshness.ROLLING: "refreshed on a schedule - score the window after the cutoff",
+    Freshness.POST_CUTOFF: "published after this model stopped learning",
+    Freshness.PRE_CUTOFF: "inside the training window - partly a memory test",
+    Freshness.UNKNOWN: "publication date not on file - check before quoting a number",
+}
+
+STATUS_WORD = {
+    CaseStatus.PASSED: "passed",
+    CaseStatus.FAILED: "failed",
+    CaseStatus.BLOCKED: "nothing runnable",
+    CaseStatus.ERROR: "never ran",
+}
+
+
+def _rate(value: Optional[float], empty: str = "nothing settled") -> str:
+    return f"{value:.0%}" if value is not None else f"_{empty}_"
+
+
+def _tally(tally: Tally) -> str:
+    return (
+        f"{tally.passed} passed, {tally.failed} failed, {tally.blocked} blocked"
+        f" ({_rate(tally.pass_rate)})"
+    )
+
+
+def _score_line(score: Score) -> str:
+    return (
+        f"| {score.label} | {score.cases} | {score.runs} | {score.passed} | {score.failed} | "
+        f"{score.blocked} | {score.errors} | {_rate(score.pass_rate)} |"
+    )
+
+
+def _groups(groups: List[Group], first: str) -> List[str]:
+    rows = [f"| {first} | Cases | Checks |", "| --- | --- | --- |"]
+    for group in groups:
+        rows.append(f"| {group.label} | {group.cases} | {_tally(group.checks)} |")
+    return rows
+
+
+def render_run(report: RunReport) -> str:
+    """A run as a document. The blocked count is never far from a pass rate."""
+    lines: List[str] = [
+        f"# Run {report.run_id}",
+        "",
+        f"**Subject:** {report.subject} — suite `{report.suite_digest}`, spec `{report.spec_digest}`  ",
+        f"**Model under test:** `{report.model}`"
+        + (
+            f" — judged by `{report.judge_model}`"
+            if report.judge_model
+            else " — no judge ran"
+        )
+        + ("  \n**Mock run: no provider was called.**  " if report.mock else "  "),
+        f"**Held out:** {_rate(report.headline.pass_rate)} of {report.headline.graded_runs} graded run(s)  ",
+        f"**Checks:** {_tally(report.overall.checks)}  ",
+        f"**Cost:** {report.overall.runs} run(s), {report.usage.tokens:,} tokens, "
+        + (
+            f"${report.usage.usd:.4f}"
+            if report.usage.usd is not None
+            else "spend not priced"
+        )
+        + f", {report.seconds:.0f}s wall clock",
+        "",
+    ]
+
+    if report.warnings:
+        lines += ["## Read this first", ""]
+        lines += [f"- {warning}" for warning in report.warnings]
+        lines.append("")
+
+    lines += [
+        "## 1. The numbers",
+        "",
+        "A run passes a case only when every check that ran on it passed. Blocked "
+        "checks are not counted either way — they are listed in full below.",
+        "",
+        "| Split | Cases | Runs | Passed | Failed | Blocked | Errors | Pass rate |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        _score_line(report.headline),
+        _score_line(report.dev),
+        _score_line(report.overall),
+        "",
+        "## 2. By KPI",
+        "",
+        "A KPI with nothing settled is a KPI this run did not measure, whatever the "
+        "case count says.",
+        "",
+        *_groups(report.by_kpi, "KPI"),
+        "",
+        "## 3. By check kind",
+        "",
+        *_groups(report.by_kind, "Kind"),
+        "",
+        "## 4. By behaviour",
+        "",
+        *_groups(report.by_behaviour, "Behaviour"),
+        "",
+    ]
+
+    blocked = [(case, block) for case in report.cases for block in case.blocked]
+    if blocked:
+        reasons: dict = {}
+        for _, block in blocked:
+            reasons.setdefault(block.reason, 0)
+            reasons[block.reason] += 1
+        lines += [
+            "## 5. What could not be checked",
+            "",
+            "| Checks | Why not |",
+            "| --- | --- |",
+        ]
+        for reason, count in sorted(reasons.items(), key=lambda pair: -pair[1]):
+            lines.append(f"| {count} | {reason} |")
+        lines.append("")
+
+    if report.contamination:
+        contamination = report.contamination
+        lines += [
+            "## 6. Contamination",
+            "",
+            f"**{contamination.verdict.value.replace('_', ' ')}** — "
+            f"{FRESHNESS_BLURB[contamination.verdict]}  ",
+            f"Cutoff for `{contamination.model}`: "
+            + (str(contamination.cutoff) if contamination.cutoff else "_not on file_")
+            + "  ",
+            f"{contamination.clean_cases} case(s) the model cannot have seen, "
+            f"{contamination.unknown_cases} unknown, {contamination.at_risk_cases} at risk",
+            "",
+            "| Origin | Cases | Verdict | Why |",
+            "| --- | --- | --- | --- |",
+        ]
+        for origin in contamination.by_origin:
+            lines.append(
+                f"| {origin.source} | {origin.cases} | {origin.verdict.value} | {origin.why} |"
+            )
+        lines.append("")
+
+    failures = [c for c in report.cases if c.status is not CaseStatus.PASSED]
+    lines += [
+        "## 7. Cases that did not pass",
+        "",
+        f"{len(failures)} of {len(report.cases)}. Every verdict carries the span it was read off; "
+        "the full spans are in the run JSON and the stored traces.",
+        "",
+    ]
+    for case in failures[:40]:
+        lines.append(
+            f"### `{case.case_id}` — {STATUS_WORD[case.status]} "
+            f"({case.passed}/{case.samples} sample(s) passed)"
+        )
+        lines += [
+            "",
+            f"- **{case.behaviour}** / {case.family} / {case.split.value} / {case.source}",
+            f"- {case.instruction}",
+        ]
+        for run in case.runs:
+            for outcome in run.result.outcomes:
+                if outcome.passed:
+                    continue
+                lines.append(
+                    f"- FAILED `{outcome.verifier}` — {_preview(outcome.evidence or outcome.note or 'no evidence')}"
+                )
+        for block in case.blocked:
+            lines.append(f"- blocked `{block.verifier}` — {block.reason}")
+        lines.append("")
+    if len(failures) > 40:
+        lines.append(f"_{len(failures) - 40} more in the run JSON._")
+        lines.append("")
+
+    lines += ["## 8. Notes", "", *_bullets(report.notes, "none"), ""]
+    return "\n".join(lines)
+
+
+def render_fresh(cutoff: Optional[Cutoff] = None) -> str:
+    """The contamination-resistant catalogue, judged against one model's cutoff."""
+    lines = [
+        "# Ground truth the model cannot already have seen",
+        "",
+    ]
+    if cutoff:
+        lines += [
+            f"Judged against `{cutoff.model}`, cutoff **{cutoff.cutoff}** "
+            f"([source]({cutoff.source}), read {cutoff.read_on}).",
+            "",
+        ]
+    else:
+        lines += [
+            "No model cutoff given, so nothing is judged post-cutoff here — only the "
+            "sources that are clean whatever the cutoff is.",
+            "",
+        ]
+
+    for source, verdict in fresh_by_verdict(cutoff):
+        lines += _fresh_entry(source, verdict)
+    return "\n".join(lines)
+
+
+def _fresh_entry(source: FreshSource, verdict: Freshness) -> List[str]:
+    return [
+        f"## {source.name} — {verdict.value.replace('_', ' ')}",
+        "",
+        f"{source.measures}",
+        "",
+        f"- **Metric:** {source.metric}",
+        f"- **Released:** {source.released}"
+        + (f"; {source.refresh}" if source.refresh else ""),
+        f"- **Size:** {source.size or 'not stated'}",
+        f"- **Licence:** {source.licence or 'not stated - check the page'}",
+        f"- **Keeping it clean:** {source.staying_clean}",
+        f"- **Caveat:** {source.caveats}",
+        f"- {source.url}",
+        "",
+    ]
+
+
 def render_case(case: Case) -> str:
     """One case in full - what a person reads when they want to argue with it."""
     lines = [
@@ -608,9 +831,11 @@ def render_case(case: Case) -> str:
 __all__ = [
     "render_analysis",
     "render_case",
+    "render_fresh",
     "render_ground_truth",
     "render_markdown",
     "render_profile",
     "render_questions",
+    "render_run",
     "render_suite",
 ]

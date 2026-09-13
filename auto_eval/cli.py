@@ -13,19 +13,25 @@ from .analysis import AnalysisReport, analyze_sources
 from .benchmarks import CATALOGUE, Benchmark, BenchmarkMatch, match
 from .classifier import DEFAULT_MAX_TOKENS, ClassifierError, classify, list_models
 from .config import DEFAULT_MODEL, get_settings
+from .contamination import cutoff_for, parse_cutoff
 from .gaps import analyze
 from .ground_truth import GroundTruthReport, gate, identify
 from .render import (
     render_analysis,
     render_case,
+    render_fresh,
     render_ground_truth,
     render_markdown,
     render_profile,
     render_questions,
+    render_run,
     render_suite,
 )
+from .runner import DEFAULT_CONCURRENCY, RunError, load_run, write_run
+from .runner import list_runs as list_run_dirs
+from .runner import run_suite as execute_suite
 from .schema import Readiness, TaskSpec
-from .suite import SuiteError
+from .suite import Split, SuiteError
 from .suite import build as build_suite
 from .suite import load as load_suite
 from .suite import write as write_suite
@@ -311,6 +317,120 @@ def _cmd_suite(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_run(args: argparse.Namespace) -> int:
+    """Run every case in a written suite against the provider API."""
+    suite = load_suite(Path(args.suite))
+    settings = get_settings()
+    model = args.model or settings.effective_subject_model
+
+    if not args.mock and not settings.has_key:
+        print(
+            "error: no API key, so nothing can be run against the provider. "
+            "Put OPENAI_API_KEY in your .env, or pass --mock to exercise the harness offline.",
+            file=sys.stderr,
+        )
+        return EXIT_ERROR
+
+    cutoff = parse_cutoff(model, args.cutoff) if args.cutoff else None
+    prices = (
+        (args.price_in, args.price_out) if args.price_in and args.price_out else None
+    )
+    split = Split(args.split) if args.split != "all" else None
+    samples = args.samples or suite.samples
+    planned = len(suite.cases_in(split) if split else suite.cases)
+    if args.limit:
+        planned = min(planned, args.limit)
+
+    print(
+        f"Running {planned} case(s) x {samples} sample(s) = {planned * samples} run(s) "
+        f"of {suite.name} against {model}"
+        + (" [mock: no provider call]" if args.mock else ""),
+        file=sys.stderr,
+    )
+
+    def progress(done: int, total: int, case_id: str) -> None:
+        print(f"  [{done}/{total}] {case_id}", file=sys.stderr)
+
+    run = execute_suite(
+        suite,
+        model=args.model,
+        judge_model=args.judge_model,
+        judge=not args.no_judge,
+        samples=args.samples,
+        split=split,
+        limit=args.limit,
+        concurrency=args.concurrency,
+        mock=args.mock,
+        prices=prices,
+        cutoff=cutoff,
+        progress=progress if not args.quiet else None,
+        settings=settings,
+    )
+
+    document = render_run(run.report)
+    if args.format == "json":
+        print(run.report.model_dump_json(indent=2))
+    else:
+        print(document)
+
+    if not args.no_write:
+        target = write_run(run, Path(args.out or settings.effective_runs_dir))
+        (target / "run.md").write_text(document + "\n", encoding="utf-8")
+        print(f"\nWrote {target}", file=sys.stderr)
+        print(
+            "See it in the dashboard: `auto-eval serve`, then open /dashboard",
+            file=sys.stderr,
+        )
+    return EXIT_OK
+
+
+def _cmd_runs(args: argparse.Namespace) -> int:
+    """List the runs on disk, newest first."""
+    entries = list_run_dirs(Path(args.dir or get_settings().effective_runs_dir))
+    if not entries:
+        print(
+            f"No runs under {args.dir or get_settings().effective_runs_dir}. "
+            "Run a suite with `auto-eval run SUITE`.",
+            file=sys.stderr,
+        )
+        return EXIT_OK
+    if args.format == "json":
+        print(json.dumps([e.model_dump(mode="json") for e in entries], indent=2))
+        return EXIT_OK
+    for entry in entries:
+        rate = f"{entry.pass_rate:.0%}" if entry.pass_rate is not None else "no number"
+        print(
+            f"{entry.run_id}  {rate} held out  {entry.cases} cases  "
+            f"{entry.blocked_checks} blocked checks  {entry.model}"
+            + ("  [mock]" if entry.mock else "")
+        )
+    return EXIT_OK
+
+
+def _cmd_report(args: argparse.Namespace) -> int:
+    """Read a written run back."""
+    report = load_run(Path(args.path))
+    if args.format == "json":
+        print(report.model_dump_json(indent=2))
+    else:
+        print(render_run(report))
+    return EXIT_OK
+
+
+def _cmd_fresh(args: argparse.Namespace) -> int:
+    """Ground truth published after a model stopped learning."""
+    model = args.model or get_settings().effective_subject_model
+    cutoff = parse_cutoff(model, args.cutoff) if args.cutoff else cutoff_for(model)
+    if cutoff is None:
+        print(
+            f"No published cutoff on file for {model!r}; pass --cutoff YYYY-MM-DD to judge "
+            "the dated entries against it.",
+            file=sys.stderr,
+        )
+    print(render_fresh(cutoff))
+    return EXIT_OK
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     from .web import serve
 
@@ -533,6 +653,125 @@ def build_parser() -> argparse.ArgumentParser:
     )
     suite_cmd.set_defaults(func=_cmd_suite)
 
+    run_cmd = sub.add_parser(
+        "run",
+        help="Run a written suite against the provider API.",
+        description=(
+            "Runs every case in a suite, `samples` times each, and writes the result where "
+            "the dashboard can read it. Tools are declared to the model and answered inside "
+            "the harness, so nothing touches a live system - which also means end-state "
+            "checks are reported as blocked rather than guessed at. --mock runs the whole "
+            "path against a canned client, with no API call."
+        ),
+    )
+    run_cmd.add_argument(
+        "suite", help="The directory `author -o` wrote, or the suite.json itself."
+    )
+    run_cmd.add_argument(
+        "--model",
+        default=None,
+        help="The model under test. Defaults to AUTO_EVAL_SUBJECT_MODEL.",
+    )
+    run_cmd.add_argument(
+        "--judge-model",
+        default=None,
+        help="Model that rules on the rubrics. Defaults to AUTO_EVAL_JUDGE_MODEL.",
+    )
+    run_cmd.add_argument(
+        "--no-judge",
+        action="store_true",
+        help="Skip the rubric checks entirely; they are reported as unsettled.",
+    )
+    run_cmd.add_argument(
+        "--samples",
+        type=int,
+        default=None,
+        help="Runs per case. Defaults to the suite's own.",
+    )
+    run_cmd.add_argument(
+        "--split",
+        choices=["all", "held_out", "dev"],
+        default="all",
+        help="Which cases to run. The reported number comes from held_out.",
+    )
+    run_cmd.add_argument(
+        "--limit", type=int, default=None, help="Run only the first N cases."
+    )
+    run_cmd.add_argument(
+        "--concurrency",
+        type=int,
+        default=DEFAULT_CONCURRENCY,
+        help=f"Cases in flight at once (default {DEFAULT_CONCURRENCY}).",
+    )
+    run_cmd.add_argument(
+        "--mock", action="store_true", help="Call no provider; use the canned client."
+    )
+    run_cmd.add_argument(
+        "--cutoff",
+        metavar="YYYY-MM-DD",
+        default=None,
+        help="The model's training cutoff, for the contamination check.",
+    )
+    run_cmd.add_argument(
+        "--price-in", type=float, default=None, help="USD per million input tokens."
+    )
+    run_cmd.add_argument(
+        "--price-out", type=float, default=None, help="USD per million output tokens."
+    )
+    run_cmd.add_argument("-o", "--out", metavar="PATH", help="Where to write the run.")
+    run_cmd.add_argument(
+        "--no-write", action="store_true", help="Print the report without writing it."
+    )
+    run_cmd.add_argument("--quiet", action="store_true", help="No per-case progress.")
+    run_cmd.add_argument(
+        "--format",
+        choices=["markdown", "json"],
+        default="markdown",
+        help="Stdout format.",
+    )
+    run_cmd.set_defaults(func=_cmd_run)
+
+    runs_cmd = sub.add_parser("runs", help="List the runs on disk, newest first.")
+    runs_cmd.add_argument(
+        "--dir",
+        metavar="PATH",
+        help="Where the runs are. Defaults to AUTO_EVAL_RUNS_DIR.",
+    )
+    runs_cmd.add_argument(
+        "--format", choices=["text", "json"], default="text", help="Stdout format."
+    )
+    runs_cmd.set_defaults(func=_cmd_runs)
+
+    report_cmd = sub.add_parser("report", help="Read back a run written by `run`.")
+    report_cmd.add_argument("path", help="The run directory, or the run.json itself.")
+    report_cmd.add_argument(
+        "--format",
+        choices=["markdown", "json"],
+        default="markdown",
+        help="Stdout format.",
+    )
+    report_cmd.set_defaults(func=_cmd_report)
+
+    fresh_cmd = sub.add_parser(
+        "fresh",
+        help="Public ground truth the model cannot already have seen.",
+        description=(
+            "Benchmarks that resist contamination: answers never published, refreshed on a "
+            "schedule, or simply released after the model's training cutoff. Offline - the "
+            "dates and cutoffs are on file with the page each was read from."
+        ),
+    )
+    fresh_cmd.add_argument(
+        "--model", default=None, help="Judge the catalogue against this model's cutoff."
+    )
+    fresh_cmd.add_argument(
+        "--cutoff",
+        metavar="YYYY-MM-DD",
+        default=None,
+        help="Use this cutoff instead of the one on file.",
+    )
+    fresh_cmd.set_defaults(func=_cmd_fresh)
+
     serve_cmd = sub.add_parser(
         "serve",
         help="Run the local web UI.",
@@ -587,6 +826,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)
+    except RunError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
     except SuiteError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_INSUFFICIENT

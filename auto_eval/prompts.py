@@ -144,6 +144,15 @@ sources are `adaptable` or `contextual`; reserve `direct` for a real match.
 a source does not speak to any of them.
 - Record `access` and `licence` only from what the page states; leave them \
 unknown or null otherwise.
+- Record `released` - when the data itself was published, as the page states it \
+(a year is enough) - and leave it null rather than guessing. This is what \
+decides whether a score means anything: anything published before a model's \
+training cutoff may already be in that model's training data, so a high score \
+on it is partly a memory test.
+- Prefer, and say so in `notes`, sources that resist that: suites that refresh \
+on a schedule, suites whose answers were never published, and anything released \
+after the model under test stopped training. Report the older standard suite too \
+where it fits - just say which it is.
 - Put anything that changes how a source should be read in `caveats` or \
 `notes`: the benchmark is saturated, the data is older than the model, the \
 licence forbids commercial use, the number is self-reported by the vendor.

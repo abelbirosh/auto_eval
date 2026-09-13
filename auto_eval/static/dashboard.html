@@ -1,0 +1,630 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Auto_Eval &middot; runs</title>
+<style>
+  /* Same printed-spec-sheet look as the classifier page: cream paper, hairline
+     rules, weight and space doing the separating. A dashboard earns two extra
+     things - a bar, so a pass rate is legible at a glance, and three colours
+     that always mean the same thing: passed, failed, could not be checked. */
+  :root {
+    --paper:  #f6f2e8;
+    --ink:    #26221d;
+    --muted:  #8c8376;
+    --rule:   #e0d9c9;
+    --rule-2: #cec5b0;
+    --accent: #3f5c47;
+    --pass:   #3f6b4e;
+    --fail:   #9c4436;
+    --blocked:#8a6a22;
+    --tint:   #efe9da;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--paper); }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 15px/1.6 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 56px 24px 120px; }
+
+  header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  h1 { font-size: 19px; font-weight: 600; margin: 0; letter-spacing: .02em; }
+  h1 span { color: var(--muted); font-weight: 400; }
+  .meta {
+    margin-left: auto; font-size: 11.5px; color: var(--muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .02em;
+  }
+  .sub { color: var(--muted); font-size: 14px; margin: 10px 0 30px; max-width: 74ch; }
+  a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--rule-2); }
+  a:hover { border-bottom-color: var(--accent); }
+
+  button {
+    font: inherit; font-size: 14px; padding: 0; border: 0; border-radius: 0;
+    background: none; cursor: pointer; color: var(--muted);
+    border-bottom: 1px solid transparent; transition: color .12s, border-color .12s;
+  }
+  button:hover { color: var(--ink); border-bottom-color: var(--rule-2); }
+  .primary { color: var(--accent); font-weight: 600; border-bottom-color: var(--accent); }
+  .primary:disabled { opacity: .5; cursor: progress; border-bottom-color: transparent; }
+  .row { display: flex; gap: 22px; align-items: center; margin-top: 16px; flex-wrap: wrap; }
+  .hint { color: var(--muted); font-size: 12px; }
+
+  .banner { margin: 0 0 24px; padding-left: 13px; font-size: 13.5px;
+    border-left: 2px solid var(--rule-2); color: var(--muted); }
+  .banner.warn { border-left-color: var(--blocked); color: var(--blocked); }
+  .banner.err  { border-left-color: var(--fail); color: var(--fail); }
+
+  h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .14em;
+    color: var(--muted); font-weight: 700;
+    margin: 40px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--rule);
+  }
+  h3 { font-size: 15px; font-weight: 600; margin: 0 0 6px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 8px 14px 8px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th {
+    color: var(--muted); font-weight: 600; font-size: 10.5px;
+    text-transform: uppercase; letter-spacing: .1em; white-space: nowrap;
+  }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; padding-right: 18px; }
+  .scroll { overflow-x: auto; }
+  ul { margin: 4px 0; padding-left: 17px; }
+  li { margin: 4px 0; }
+  li::marker { color: var(--rule-2); }
+
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  code { color: var(--muted); }
+  .none { color: var(--muted); font-style: italic; }
+  .why { color: var(--muted); font-size: 12.5px; }
+  pre {
+    background: var(--tint); padding: 14px; overflow-x: auto;
+    font-size: 12.5px; line-height: 1.55; margin: 10px 0 0; white-space: pre-wrap;
+  }
+  details { margin-top: 18px; border-top: 1px solid var(--rule); padding-top: 14px; }
+  details.inline { margin: 0; border-top: 0; padding-top: 0; }
+  summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
+  summary:hover { color: var(--ink); }
+
+  /* The headline: one number, its denominator, and what it excludes. */
+  .figures { display: flex; gap: 44px; flex-wrap: wrap; margin: 26px 0 8px; }
+  .figure .n { font-size: 30px; font-weight: 600; letter-spacing: -.01em; line-height: 1.1; }
+  .figure .k { font-size: 10.5px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); font-weight: 700; }
+  .figure .d { font-size: 12.5px; color: var(--muted); }
+  .figure.pass .n { color: var(--pass); }
+  .figure.fail .n { color: var(--fail); }
+  .figure.blocked .n { color: var(--blocked); }
+
+  .bar { display: flex; height: 6px; margin: 6px 0 2px; background: var(--tint); min-width: 120px; }
+  .bar i { display: block; height: 100%; }
+  .bar .p { background: var(--pass); }
+  .bar .f { background: var(--fail); }
+  .bar .b { background: var(--rule-2); }
+
+  .badge { font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+  .badge.passed, .badge.held_out, .badge.rolling, .badge.post_cutoff { color: var(--pass); }
+  .badge.failed, .badge.pre_cutoff { color: var(--fail); }
+  .badge.blocked, .badge.unknown { color: var(--blocked); }
+  .badge.error { color: var(--fail); }
+  .tag {
+    font-size: 10px; font-weight: 700; color: var(--blocked);
+    text-transform: uppercase; letter-spacing: .12em; margin-left: 6px;
+  }
+
+  /* Run list and case list: rows that open. */
+  tr.pick { cursor: pointer; }
+  tr.pick:hover td { background: var(--tint); }
+  tr.on td { background: var(--tint); }
+  .verdicts { margin: 0; padding: 0; list-style: none; font-size: 13px; }
+  .verdicts li { display: flex; gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--rule); }
+  .verdicts li:last-child { border-bottom: 0; }
+  .verdicts .mark { width: 58px; flex: none; font-size: 10px; font-weight: 700;
+    letter-spacing: .1em; text-transform: uppercase; padding-top: 3px; }
+  .verdicts .mark.p { color: var(--pass); }
+  .verdicts .mark.f { color: var(--fail); }
+  .verdicts .mark.b { color: var(--blocked); }
+  .open { background: var(--tint); padding: 16px 18px; }
+  .open h3 { margin-top: 14px; }
+  .open h3:first-child { margin-top: 0; }
+
+  fieldset { border: 0; border-top: 1px solid var(--rule); margin: 0; padding: 16px 0 0; }
+  label { font-size: 13px; color: var(--muted); display: inline-flex; gap: 7px; align-items: center; }
+  input[type=text], input[type=number], select {
+    font: inherit; font-size: 13.5px; color: var(--ink); background: transparent;
+    border: 0; border-bottom: 1px solid var(--rule-2); padding: 2px 0; min-width: 80px;
+  }
+  input:focus, select:focus { outline: 0; border-bottom-color: var(--accent); }
+  select { min-width: 220px; }
+  .grid { display: flex; gap: 26px; flex-wrap: wrap; align-items: flex-end; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Auto_Eval <span>&middot; runs</span></h1>
+    <span class="meta" id="meta"></span>
+  </header>
+  <p class="sub">
+    Every case in a suite, run against the provider API and scored by its own checks.
+    Tools are declared to the model and answered inside the harness, so no run touches a
+    live system &mdash; which is also why the checks that need a real environment are
+    reported as blocked rather than guessed at. <a href="/">Back to the classifier</a>.
+  </p>
+
+  <div id="banner"></div>
+
+  <h2>Start a run</h2>
+  <fieldset id="starter">
+    <div class="grid">
+      <label>Suite<br><select id="suite"><option value="">loading&hellip;</option></select></label>
+      <label>Model under test<br><input type="text" id="model" placeholder="from .env"></label>
+      <label>Samples<br><input type="number" id="samples" min="1" max="20" placeholder="suite"></label>
+      <label>Split<br><select id="split" style="min-width:120px">
+        <option value="">all</option>
+        <option value="held_out">held out</option>
+        <option value="dev">dev</option>
+      </select></label>
+      <label>First N cases<br><input type="number" id="limit" min="1" placeholder="all"></label>
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="mock"> mock (call no provider)</label>
+      <label><input type="checkbox" id="judge" checked> judge the rubrics</label>
+      <button class="primary" id="start">Run suite</button>
+      <span class="hint" id="progress"></span>
+    </div>
+  </fieldset>
+
+  <h2>Runs</h2>
+  <div class="scroll" id="runs"><p class="none">loading&hellip;</p></div>
+
+  <section id="report" hidden></section>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c =>
+  ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+const pct = (v) => v === null || v === undefined ? '<span class="none">nothing settled</span>' : `${Math.round(v * 100)}%`;
+const num = (n) => (n ?? 0).toLocaleString();
+const words = (s) => esc(String(s ?? "").replace(/_/g, " "));
+
+function banner(kind, msg) {
+  $("banner").innerHTML = msg ? `<div class="banner ${kind}">${esc(msg)}</div>` : "";
+}
+
+function rate(tally) {
+  const settled = (tally.passed || 0) + (tally.failed || 0);
+  return settled ? (tally.passed || 0) / settled : null;
+}
+
+function bar(tally) {
+  const total = (tally.passed || 0) + (tally.failed || 0) + (tally.blocked || 0);
+  if (!total) return "";
+  const w = (n) => `${((n || 0) / total * 100).toFixed(1)}%`;
+  return `<div class="bar" title="${tally.passed} passed, ${tally.failed} failed, ${tally.blocked} blocked">
+    <i class="p" style="width:${w(tally.passed)}"></i>
+    <i class="f" style="width:${w(tally.failed)}"></i>
+    <i class="b" style="width:${w(tally.blocked)}"></i></div>`;
+}
+
+function tallyCell(tally) {
+  return `${bar(tally)}<span class="why">${tally.passed} passed &middot; ${tally.failed} failed &middot;
+    ${tally.blocked} blocked &middot; ${pct(rate(tally))}</span>`;
+}
+
+function list(items, empty) {
+  if (!items || !items.length) return `<p class="none">${esc(empty)}</p>`;
+  return `<ul>${items.map(i => `<li>${esc(i)}</li>`).join("")}</ul>`;
+}
+
+let health = {};
+let suites = [];
+let report = null;
+let openCase = null;
+
+async function get(url) {
+  const r = await fetch(url);
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.detail || `${url} failed (${r.status})`);
+  return body;
+}
+
+async function boot() {
+  try {
+    health = await get("/api/health");
+    $("meta").textContent = `under test ${health.subject_model} · judge ${health.judge_model} · runs in ${health.runs_dir}`;
+    if (!health.has_key) {
+      banner("warn", "No OPENAI_API_KEY found, so a real run cannot start. Tick 'mock' to exercise the harness offline, or add a key to your .env and restart.");
+      $("mock").checked = true;
+    }
+  } catch (e) { /* the page still works without it */ }
+  await Promise.all([loadSuites(), loadRuns()]);
+}
+
+async function loadSuites() {
+  try {
+    suites = await get("/api/suites");
+  } catch (e) {
+    suites = [];
+  }
+  const options = suites.length
+    ? suites.map(s => `<option value="${esc(s.path)}">${esc(s.name)} — ${s.cases} cases, ${s.held_out} held out (${esc(s.digest)})</option>`).join("")
+    : `<option value="">no suites found under the working directory</option>`;
+  $("suite").innerHTML = options;
+  $("start").disabled = !suites.length;
+  if (!suites.length) {
+    $("progress").textContent = "Write one first: auto-eval author -s task.json -o suites/my-agent";
+  }
+}
+
+async function loadRuns(select) {
+  let runs = [];
+  try {
+    runs = await get("/api/runs");
+  } catch (e) {
+    $("runs").innerHTML = `<p class="none">${esc(e.message)}</p>`;
+    return;
+  }
+  if (!runs.length) {
+    $("runs").innerHTML = `<p class="none">No runs yet. Start one above, or from the command line: auto-eval run suites/my-agent</p>`;
+    return;
+  }
+  $("runs").innerHTML = `<table>
+    <tr><th>Run</th><th>Started</th><th>Subject</th><th>Model</th>
+      <th class="num">Held out</th><th class="num">Cases</th><th class="num">Blocked checks</th><th></th></tr>
+    ${runs.map(r => `<tr class="pick" data-run="${esc(r.run_id)}">
+      <td><code>${esc(r.run_id)}</code></td>
+      <td class="why">${esc((r.started_at || "").replace("T", " ").replace("+00:00", " UTC"))}</td>
+      <td>${esc(r.subject)}</td>
+      <td><code>${esc(r.model)}</code>${r.mock ? '<span class="tag">mock</span>' : ""}</td>
+      <td class="num">${pct(r.pass_rate)}</td>
+      <td class="num">${num(r.cases)}</td>
+      <td class="num">${num(r.blocked_checks)}</td>
+      <td class="why">${r.warnings} warning(s)</td></tr>`).join("")}
+  </table>`;
+  $("runs").querySelectorAll("tr.pick").forEach(row => {
+    row.onclick = () => showRun(row.dataset.run);
+  });
+  await showRun(select || runs[0].run_id);
+}
+
+async function showRun(runId) {
+  $("runs").querySelectorAll("tr.pick").forEach(row =>
+    row.classList.toggle("on", row.dataset.run === runId));
+  try {
+    report = await get(`/api/runs/${encodeURIComponent(runId)}`);
+  } catch (e) {
+    banner("err", e.message);
+    return;
+  }
+  openCase = null;
+  renderReport();
+  $("report").hidden = false;
+}
+
+const STATUS_WORD = {
+  passed: "passed",
+  failed: "failed",
+  blocked: "nothing runnable",
+  error: "never ran",
+};
+
+const FRESHNESS = {
+  held_out: "answers never published — a score here cannot be recall",
+  rolling: "refreshed on a schedule — score the window after the cutoff",
+  post_cutoff: "published after this model stopped learning",
+  pre_cutoff: "inside the training window — partly a memory test",
+  unknown: "publication date not on file — check before quoting a number",
+};
+
+function figures(r) {
+  const checks = r.overall.checks;
+  const spend = r.usage.usd === null || r.usage.usd === undefined
+    ? "not priced" : `$${r.usage.usd.toFixed(4)}`;
+  return `<div class="figures">
+    <div class="figure pass">
+      <div class="k">held out</div>
+      <div class="n">${pct(r.headline.pass_rate !== undefined ? r.headline.pass_rate : null)}</div>
+      <div class="d">${r.headline.passed} of ${r.headline.passed + r.headline.failed} graded run(s)<br>
+        ${r.headline.cases} case(s), ${r.samples} sample(s) each</div>
+    </div>
+    <div class="figure">
+      <div class="k">checks settled</div>
+      <div class="n">${num(checks.passed + checks.failed)}</div>
+      ${bar(checks)}
+      <div class="d">${checks.passed} passed, ${checks.failed} failed</div>
+    </div>
+    <div class="figure blocked">
+      <div class="k">could not be checked</div>
+      <div class="n">${num(checks.blocked)}</div>
+      <div class="d">of ${num(checks.passed + checks.failed + checks.blocked)} checks &mdash;
+        listed in full below</div>
+    </div>
+    <div class="figure">
+      <div class="k">cost</div>
+      <div class="n">${num(r.usage.tokens === undefined ? (r.usage.input_tokens + r.usage.output_tokens) : r.usage.tokens)}</div>
+      <div class="d">tokens over ${r.overall.runs} run(s)<br>${spend} &middot; ${Math.round(r.seconds)}s wall clock</div>
+    </div>
+  </div>`;
+}
+
+function splitTable(r) {
+  const row = (s) => `<tr><td>${esc(s.label)}</td>
+    <td class="num">${s.cases}</td><td class="num">${s.runs}</td>
+    <td class="num">${s.passed}</td><td class="num">${s.failed}</td>
+    <td class="num">${s.blocked}</td><td class="num">${s.errors}</td>
+    <td class="num">${pct(s.pass_rate === undefined ? null : s.pass_rate)}</td></tr>`;
+  return `<table>
+    <tr><th>Split</th><th class="num">Cases</th><th class="num">Runs</th><th class="num">Passed</th>
+      <th class="num">Failed</th><th class="num">Blocked</th><th class="num">Errors</th><th class="num">Pass rate</th></tr>
+    ${row(r.headline)}${row(r.dev)}${row(r.overall)}</table>`;
+}
+
+function groupTable(groups, first) {
+  if (!groups || !groups.length) return `<p class="none">nothing to group</p>`;
+  return `<table>
+    <tr><th>${esc(first)}</th><th class="num">Cases</th><th>Checks</th></tr>
+    ${groups.map(g => `<tr><td>${words(g.label)}</td><td class="num">${g.cases}</td>
+      <td>${tallyCell(g.checks)}</td></tr>`).join("")}</table>`;
+}
+
+function blockedTable(r) {
+  const reasons = new Map();
+  r.cases.forEach(c => c.blocked.forEach(b => {
+    const key = b.reason;
+    const seen = reasons.get(key) || { count: 0, kinds: new Set() };
+    seen.count += 1;
+    seen.kinds.add(b.kind);
+    reasons.set(key, seen);
+  }));
+  if (!reasons.size) return `<p class="none">Every check in this suite ran.</p>`;
+  return `<table>
+    <tr><th class="num">Checks</th><th>Kind</th><th>Why not</th></tr>
+    ${[...reasons.entries()].sort((a, b) => b[1].count - a[1].count).map(([reason, seen]) =>
+      `<tr><td class="num">${seen.count}</td><td>${[...seen.kinds].map(words).join(", ")}</td>
+        <td>${esc(reason)}</td></tr>`).join("")}</table>`;
+}
+
+function contaminationPanel(c) {
+  if (!c) return "";
+  return `<h2>Contamination</h2>
+    <p><span class="badge ${esc(c.verdict)}">${words(c.verdict)}</span>
+      &nbsp;${esc(FRESHNESS[c.verdict] || "")}</p>
+    <p class="why">Cutoff for <code>${esc(c.model)}</code>:
+      ${c.cutoff ? esc(c.cutoff) : '<span class="none">not on file</span>'}
+      ${c.cutoff_source ? `&middot; <a href="${esc(c.cutoff_source)}" target="_blank" rel="noopener noreferrer">source</a>` : ""}
+      &middot; ${c.clean_cases} case(s) the model cannot have seen, ${c.unknown_cases} unknown,
+      ${c.at_risk_cases} at risk</p>
+    <table>
+      <tr><th>Origin</th><th class="num">Cases</th><th>Verdict</th><th>Why</th></tr>
+      ${c.by_origin.map(o => `<tr>
+        <td>${o.url ? `<a href="${esc(o.url)}" target="_blank" rel="noopener noreferrer">${esc(o.source)}</a>` : esc(o.source)}</td>
+        <td class="num">${o.cases}</td>
+        <td><span class="badge ${esc(o.verdict)}">${words(o.verdict)}</span></td>
+        <td class="why">${esc(o.why)}</td></tr>`).join("")}
+    </table>`;
+}
+
+function caseTable(r) {
+  const rows = r.cases.map(c => {
+    const tally = { passed: c.checks_passed, failed: c.checks_failed, blocked: c.checks_blocked };
+    return `<tr class="pick" data-case="${esc(c.case_id)}">
+      <td><span class="badge ${esc(c.status)}">${esc(STATUS_WORD[c.status] || c.status)}</span></td>
+      <td><code>${esc(c.case_id)}</code><br><span class="why">${esc(c.family)}</span></td>
+      <td>${esc(c.behaviour)}<br><span class="why">${esc(c.eval_types.join(", "))}</span></td>
+      <td class="why">${esc(c.split)} &middot; ${esc(c.source)}</td>
+      <td class="num">${c.passed}/${c.samples}</td>
+      <td>${tallyCell(tally)}</td></tr>
+      ${openCase === c.case_id ? `<tr><td colspan="6" class="open" id="open-${esc(c.case_id)}">${caseDetail(c)}</td></tr>` : ""}`;
+  }).join("");
+  return `<table>
+    <tr><th>Status</th><th>Case</th><th>Behaviour</th><th>Split</th><th class="num">Samples</th><th>Checks</th></tr>
+    ${rows}</table>`;
+}
+
+function caseDetail(c) {
+  const samples = c.runs.map(run => {
+    const verdicts = run.result.outcomes.map(o => `<li>
+      <span class="mark ${o.passed ? "p" : "f"}">${o.passed ? "pass" : "fail"}</span>
+      <span><code>${esc(o.verifier)}</code>
+        <br><span class="why">${esc(o.evidence || "no evidence quoted")}</span>
+        ${o.note ? `<br><span class="why">${esc(o.note)}</span>` : ""}</span></li>`).join("");
+    const blocked = run.blocked.map(b => `<li>
+      <span class="mark b">blocked</span>
+      <span><code>${esc(b.verifier)}</code> <span class="why">${words(b.kind)}</span>
+        <br><span class="why">${esc(b.reason)}</span></span></li>`).join("");
+    return `<h3>Sample ${run.sample + 1} &middot; ${esc(STATUS_WORD[run.status] || run.status)}
+        <span class="why">stopped: ${words(run.stop_reason)} &middot;
+        ${run.usage.steps} step(s), ${run.usage.tool_calls} tool call(s),
+        ${num(run.usage.input_tokens + run.usage.output_tokens)} tokens</span></h3>
+      ${run.error ? `<p class="why">Provider error: ${esc(run.error)}</p>` : ""}
+      <ul class="verdicts">${verdicts}${blocked}</ul>
+      <div class="row"><button data-trace="${esc(c.case_id)}" data-sample="${run.sample}">Show the trace this was read off</button></div>
+      <div id="trace-${esc(c.case_id)}-${run.sample}"></div>`;
+  }).join("");
+  return `<p><strong>${esc(c.instruction)}</strong></p>${samples}`;
+}
+
+function renderReport() {
+  const r = report;
+  $("report").innerHTML = `
+    <h2>${esc(r.run_id)}</h2>
+    <p><strong>${esc(r.subject)}</strong> &middot; suite <code>${esc(r.suite_digest)}</code>
+      &middot; spec <code>${esc(r.spec_digest)}</code>
+      &middot; under test <code>${esc(r.model)}</code>
+      &middot; ${r.judge_model ? `judged by <code>${esc(r.judge_model)}</code>` : "no judge ran"}
+      ${r.mock ? '<span class="tag">mock</span>' : ""}
+      ${r.suite_verified ? "" : '<span class="tag">suite digest does not match</span>'}</p>
+
+    ${figures(r)}
+
+    ${r.warnings.length ? `<h2>Read this first</h2>${list(r.warnings, "")}` : ""}
+
+    <h2>The numbers</h2>
+    <p class="why">A run passes a case only when every check that ran on it passed. Blocked
+      checks count neither way.</p>
+    <div class="scroll">${splitTable(r)}</div>
+
+    <h2>By KPI</h2>
+    <p class="why">A KPI with nothing settled is one this run did not measure, whatever the case count says.</p>
+    <div class="scroll">${groupTable(r.by_kpi, "KPI")}</div>
+
+    <h2>By check kind</h2>
+    <div class="scroll">${groupTable(r.by_kind, "Kind")}</div>
+
+    <h2>What could not be checked</h2>
+    <div class="scroll">${blockedTable(r)}</div>
+
+    ${contaminationPanel(r.contamination)}
+
+    <h2>Cases</h2>
+    <p class="why">Click a case to see every verdict and the span it was read off.</p>
+    <div class="scroll">${caseTable(r)}</div>
+
+    <details><summary>By behaviour</summary><div class="scroll">${groupTable(r.by_behaviour, "Behaviour")}</div></details>
+    <details><summary>By family</summary><div class="scroll">${groupTable(r.by_family, "Family")}</div></details>
+    <details><summary>Notes</summary>${list(r.notes, "none")}</details>
+    <details><summary>Report as markdown</summary><pre id="md">loading&hellip;</pre></details>
+    <details><summary>Raw JSON</summary><pre>${esc(JSON.stringify(r, null, 2))}</pre></details>`;
+
+  $("report").querySelectorAll("tr.pick").forEach(row => {
+    row.onclick = () => {
+      openCase = openCase === row.dataset.case ? null : row.dataset.case;
+      renderReport();
+      const open = $("open-" + openCase);
+      if (open) open.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    };
+  });
+  $("report").querySelectorAll("button[data-trace]").forEach(btn => {
+    btn.onclick = (e) => { e.stopPropagation(); showTrace(btn.dataset.trace, Number(btn.dataset.sample), btn); };
+  });
+  const md = $("md");
+  if (md) {
+    const holder = md.closest("details");
+    holder.ontoggle = async () => {
+      if (!holder.open || md.dataset.loaded) return;
+      try {
+        const body = await get(`/api/runs/${encodeURIComponent(r.run_id)}/markdown`);
+        md.textContent = body.markdown;
+        md.dataset.loaded = "1";
+      } catch (e) { md.textContent = e.message; }
+    };
+  }
+}
+
+async function showTrace(caseId, sample, btn) {
+  const holder = $(`trace-${caseId}-${sample}`);
+  if (!holder) return;
+  if (holder.dataset.shown) {
+    holder.innerHTML = "";
+    delete holder.dataset.shown;
+    btn.textContent = "Show the trace this was read off";
+    return;
+  }
+  btn.disabled = true;
+  try {
+    const trace = await get(`/api/runs/${encodeURIComponent(report.run_id)}/trace/${encodeURIComponent(caseId)}?sample=${sample}`);
+    holder.innerHTML = `<pre>${esc(traceText(trace))}</pre>`;
+    holder.dataset.shown = "1";
+    btn.textContent = "Hide the trace";
+  } catch (e) {
+    holder.innerHTML = `<p class="why">${esc(e.message)}</p>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function traceText(t) {
+  const lines = [
+    `system: ${t.system}`,
+    ``,
+    `task: ${t.instruction}`,
+    ``,
+  ];
+  t.steps.forEach(s => {
+    if (s.text) lines.push(`[step ${s.index}] assistant: ${s.text}`);
+    s.tool_calls.forEach(c => {
+      lines.push(`[step ${s.index}] tool call ${c.name}(${c.arguments})`);
+      lines.push(`[step ${s.index}] tool result (${c.behaviour}${c.scripted ? ", scripted by the case" : ", improvised by the harness"}): ${c.result}`);
+    });
+  });
+  lines.push(``, `stopped: ${t.stop_reason}`);
+  if (t.error) lines.push(`error: ${t.error}`);
+  t.notes.forEach(n => lines.push(`note: ${n}`));
+  return lines.join("\n");
+}
+
+async function startRun() {
+  const suite = $("suite").value;
+  if (!suite) { banner("err", "No suite to run."); return; }
+  const btn = $("start");
+  btn.disabled = true;
+  btn.textContent = "Starting…";
+  banner("", "");
+
+  const body = {
+    suite,
+    model: $("model").value.trim() || null,
+    samples: $("samples").value ? Number($("samples").value) : null,
+    split: $("split").value || null,
+    limit: $("limit").value ? Number($("limit").value) : null,
+    mock: $("mock").checked,
+    judge: $("judge").checked,
+  };
+
+  try {
+    const r = await fetch("/api/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const job = await r.json();
+    if (!r.ok) { banner("err", job.detail || `Could not start (${r.status})`); return; }
+    await poll(job.job_id);
+  } catch (e) {
+    banner("err", `Could not reach the server: ${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Run suite";
+  }
+}
+
+// The run outlives the request that started it, so the page watches the job.
+async function poll(jobId) {
+  $("start").disabled = true;
+  while (true) {
+    let job;
+    try {
+      job = await get(`/api/run/${jobId}`);
+    } catch (e) {
+      $("progress").textContent = "";
+      banner("err", e.message);
+      break;
+    }
+    if (job.state === "running") {
+      $("progress").textContent = `${job.done} of ${job.total} run(s)` +
+        (job.case_id ? ` — last: ${job.case_id}` : "");
+      await new Promise(done => setTimeout(done, 700));
+      continue;
+    }
+    if (job.state === "failed") {
+      $("progress").textContent = "";
+      banner("err", `The run failed: ${job.error}`);
+      break;
+    }
+    $("progress").textContent = `Done: ${job.done} run(s) written to ${job.path}`;
+    await loadRuns(job.run_id);
+    $("report").scrollIntoView({ behavior: "smooth", block: "start" });
+    break;
+  }
+  $("start").disabled = false;
+}
+
+$("start").onclick = startRun;
+boot();
+</script>
+</body>
+</html>

@@ -434,6 +434,7 @@ function renderReport(data) {
       <div class="head"><h3>${esc(src.name)}</h3>
         <code>${esc(src.kind)}</code>
         <span class="meta">fit ${esc(src.fit)} &middot; access ${esc(src.access)}${
+          src.released ? " &middot; published " + esc(src.released) : ""}${
           src.licence ? " &middot; " + esc(src.licence) : ""}</span></div>
       <p>${esc(src.description)}</p>
       <p><a href="${esc(src.url)}" target="_blank" rel="noopener noreferrer">${esc(src.url)}</a></p>
