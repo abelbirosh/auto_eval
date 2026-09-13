@@ -21,7 +21,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=9.1.1", "ruff>=0.6", "mypy>=1.11"]
-web = ["fastapi>=0.110", "uvicorn>=0.27"]
+web = ["fastapi>=0.141.1", "uvicorn>=0.27"]
 
 [project.scripts]
 auto-eval = "auto_eval.cli:main"
