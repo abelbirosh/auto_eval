@@ -178,7 +178,11 @@
     </div>
   </fieldset>
 
-  <h2>Runs</h2>
+  <h2>Boards <span class="why">one dataset, many systems, one row each</span></h2>
+  <div class="scroll" id="boards"><p class="none">loading&hellip;</p></div>
+  <section id="board" hidden></section>
+
+  <h2>Runs <span class="why">one suite, one system, case by case</span></h2>
   <div class="scroll" id="runs"><p class="none">loading&hellip;</p></div>
 
   <section id="report" hidden></section>
@@ -242,7 +246,7 @@ async function boot() {
       $("mock").checked = true;
     }
   } catch (e) { /* the page still works without it */ }
-  await Promise.all([loadSuites(), loadRuns()]);
+  await Promise.all([loadSuites(), loadRuns(), loadBoards()]);
 }
 
 async function loadSuites() {
@@ -296,6 +300,106 @@ async function loadRuns(select) {
   const asked = select || wantedRun();
   const known = runs.some(r => r.run_id === asked);
   await showRun(known ? asked : runs[0].run_id);
+}
+
+const secs = (v) => v === null || v === undefined ? "&mdash;" : (v < 1 ? `${Math.round(v * 1000)}ms` : `${v.toFixed(2)}s`);
+const usd = (v) => v === null || v === undefined ? "&mdash;" : `$${v.toFixed(4)}`;
+
+async function loadBoards(select) {
+  let boards = [];
+  try {
+    boards = await get("/api/boards");
+  } catch (e) {
+    $("boards").innerHTML = `<p class="none">${esc(e.message)}</p>`;
+    return;
+  }
+  if (!boards.length) {
+    $("boards").innerHTML = `<p class="none">No boards yet. Run one from the classifier page,
+      or: auto-eval board items.jsonl -c cohort.json</p>`;
+    return;
+  }
+  $("boards").innerHTML = `<table>
+    <tr><th>Board</th><th>Started</th><th>Task</th><th>Items</th>
+      <th class="num">Rows</th><th>Leader</th><th class="num">Model only</th></tr>
+    ${boards.map(b => `<tr class="pick" data-board="${esc(b.board_id)}">
+      <td><code>${esc(b.board_id)}</code></td>
+      <td class="why">${esc((b.started_at || "").replace("T", " ").replace("+00:00", " UTC"))}</td>
+      <td>${esc(b.task || "—")}<br><span class="why">${esc(b.dataset)}</span></td>
+      <td class="num">${b.items}</td>
+      <td class="num">${b.rows}</td>
+      <td>${b.leader ? esc(b.leader) + " " + pct(b.leader_accuracy) : '<span class="none">nothing scored</span>'}</td>
+      <td class="num">${pct(b.baseline_accuracy)}</td></tr>`).join("")}
+  </table>`;
+  $("boards").querySelectorAll("tr.pick").forEach(row => {
+    row.onclick = () => showBoard(row.dataset.board);
+  });
+  const asked = select || new URLSearchParams(location.search).get("board");
+  if (asked && boards.some(b => b.board_id === asked)) await showBoard(asked);
+}
+
+async function showBoard(boardId) {
+  $("boards").querySelectorAll("tr.pick").forEach(row =>
+    row.classList.toggle("on", row.dataset.board === boardId));
+  let b;
+  try {
+    b = await get(`/api/boards/${encodeURIComponent(boardId)}`);
+  } catch (e) {
+    banner("err", e.message);
+    return;
+  }
+
+  const shown = b.rows.filter(r => !r.skipped);
+  const skipped = b.rows.filter(r => r.skipped);
+  const baseline = b.rows.find(r => r.kind === "model_only");
+  const c = b.contamination;
+
+  const rows = `<table>
+    <tr><th>System</th><th>Endpoint &amp; configuration</th><th class="num">Accuracy</th>
+      <th class="num">AR@1</th><th class="num">AR@5</th><th class="num">p50</th><th class="num">p95</th>
+      <th class="num">Errors</th><th class="num">Total $</th><th class="num">$ / 1k correct</th></tr>
+    ${shown.map(r => `<tr>
+      <td>${esc(r.label)}${r.vendor && r.vendor !== r.label ? `<br><span class="why">${esc(r.vendor)}</span>` : ""}</td>
+      <td class="why">${esc(r.configuration || "—")}</td>
+      <td class="num">${pct(r.accuracy)}</td><td class="num">${pct(r.recall_at_1)}</td>
+      <td class="num">${pct(r.recall_at_5)}</td><td class="num">${secs(r.seconds_p50)}</td>
+      <td class="num">${secs(r.seconds_p95)}</td><td class="num">${r.errors}</td>
+      <td class="num">${usd(r.usd)}</td><td class="num">${usd(r.usd_per_1k_correct)}</td></tr>`).join("")}
+  </table>`;
+
+  const items = shown.map(r => `<details><summary>${esc(r.label)} &mdash; every item</summary>
+    <div class="scroll"><table>
+      <tr><th>Item</th><th>Right</th><th class="num">Rank</th><th>Evidence</th></tr>
+      ${r.verdicts.map(v => `<tr><td><code>${esc(v.item_id)}</code></td>
+        <td><span class="badge ${v.error ? "error" : (v.correct ? "passed" : "failed")}">${
+          v.error ? "error" : (v.correct ? "yes" : "no")}</span></td>
+        <td class="num">${v.rank === null || v.rank === undefined ? "&mdash;" : v.rank}</td>
+        <td class="why">${esc(v.error || v.evidence || v.note || "—")}</td></tr>`).join("")}
+    </table></div></details>`).join("");
+
+  $("board").innerHTML = `
+    <h2>${esc(b.board_id)}</h2>
+    <table class="facts">
+      <tr><th>Items</th><td>${b.items} &middot; ${esc(b.dataset)} <code>${esc(b.dataset_digest)}</code>${
+        b.dataset_source ? ` &middot; ${esc(b.dataset_source)}` : ""}</td></tr>
+      <tr><th>Held constant</th><td>model <code>${esc(b.model || "none")}</code>,
+        judge <code>${esc(b.judge_model || "none")}</code> &mdash; only the system changes between rows</td></tr>
+      <tr><th>Model only</th><td>${baseline && baseline.accuracy !== null
+        ? `${pct(baseline.accuracy)} with no endpoint at all${baseline.accuracy > 0.1
+            ? " &mdash; that much of this board is a memory test" : " &mdash; the answers cannot be recalled"}`
+        : '<span class="none">not measured</span>'}</td></tr>
+      ${c ? `<tr><th>Contamination</th><td>${words(c.verdict)} &middot; ${c.clean_cases} clean,
+        ${c.unknown_cases} unknown, ${c.at_risk_cases} at risk${c.cutoff ? ` &middot; cutoff ${esc(c.cutoff)}` : ""}</td></tr>` : ""}
+    </table>
+    ${b.warnings.length ? `<details open><summary>${b.warnings.length} thing(s) to read before quoting a number</summary>${list(b.warnings, "")}</details>` : ""}
+    <h2>The board <span class="why">alphabetical; no column decides the order</span></h2>
+    <div class="scroll">${rows}</div>
+    ${skipped.length ? `<h2>Not run</h2><div class="scroll"><table>
+      <tr><th>System</th><th>Why not</th></tr>
+      ${skipped.map(r => `<tr><td>${esc(r.label)}</td><td class="why">${esc(r.skipped)}</td></tr>`).join("")}
+    </table></div>` : ""}
+    <details><summary>How it was measured</summary>${list(b.methodology, "not recorded")}</details>
+    ${items}`;
+  $("board").hidden = false;
 }
 
 async function showRun(runId) {

@@ -504,9 +504,11 @@ def agent_gate(spec: TaskSpec, agent_profile: Optional[AgentProfile] = None) -> 
         return Gate(
             open=False,
             reason=(
-                f"The subject is a {spec.subject.kind.value}, not an agent or a workflow. "
-                "A trajectory suite would be measuring something that has no trajectory; "
-                "use `auto-eval benchmarks` and the ground-truth search instead."
+                f"The subject is a {spec.subject.kind.value}, not an agent or a workflow, so it has "
+                "no trajectory to score. What fits this is a comparison board: the same items put to "
+                "every system, one row each, with a model-only row to show the answers could not "
+                "simply be recalled. Run `auto-eval board ITEMS --cohort COHORT`, or use the board "
+                "form on the page."
             ),
         )
 

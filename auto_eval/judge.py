@@ -185,6 +185,71 @@ def rule(
     )
 
 
+ITEM_SYSTEM_PROMPT = """You decide whether an answer is correct, from the question and the answer given.
+
+Rules you are held to:
+- Judge only correctness against what the question asks. Not style, not completeness, not how it was found.
+- Quote verbatim from the answer the part that settles it. Copy the characters exactly.
+- If the answer does not contain what the question asked for, it is wrong. A refusal, a hedge, or a related fact is wrong.
+- If a reference answer is given, an answer that says the same thing in different words is right."""
+
+
+def judge_reply(
+    question: str,
+    reply: str,
+    *,
+    client: Any,
+    model: str,
+    reference: Optional[str] = None,
+    criterion: Optional[str] = None,
+    max_tokens: int = 800,
+) -> Ruling:
+    """Rule on one answer to one question, for an item with no gold string.
+
+    Never raises. A pass whose quote is not in the answer becomes a failure, the
+    same rule the rubric judge is held to: an invented quote is the one failure
+    mode that reads exactly like a real verdict.
+    """
+    lines = [f"QUESTION: {question}", f"\nANSWER GIVEN:\n{_trim(reply, 8000)}"]
+    if reference:
+        lines.append(f"\nREFERENCE ANSWER: {reference}")
+    if criterion:
+        lines.append(f"\nWHAT COUNTS AS CORRECT: {criterion}")
+
+    try:
+        completion = client.chat.completions.parse(
+            model=model,
+            messages=[
+                {"role": "system", "content": ITEM_SYSTEM_PROMPT},
+                {"role": "user", "content": "\n".join(lines)},
+            ],
+            response_format=Ruling,
+            max_completion_tokens=max_tokens,
+        )
+    except Exception as exc:
+        return Ruling(
+            passed=False, quote="", reason=f"The judge could not be reached: {exc}"
+        )
+
+    ruling: Optional[Ruling] = getattr(completion.choices[0].message, "parsed", None)
+    if ruling is None:
+        return Ruling(
+            passed=False, quote="", reason="The judge returned nothing parsable."
+        )
+    if ruling.passed and (
+        not ruling.quote.strip() or not quoted_from(reply, ruling.quote)
+    ):
+        return Ruling(
+            passed=False,
+            quote="",
+            reason=(
+                "Passed on a quote that is not in the answer, so the pass could not be "
+                f"checked and was voided. Claimed quote: {ruling.quote[:120]!r}"
+            ),
+        )
+    return ruling
+
+
 def judge_with(
     client: Any, model: str, *, max_tokens: int = 2000
 ) -> Callable[[Verifier, Case, Trace], Outcome]:
@@ -203,10 +268,12 @@ def rubric_lines(verifiers: List[Verifier]) -> int:
 
 
 __all__ = [
+    "ITEM_SYSTEM_PROMPT",
     "MAX_TRANSCRIPT_CHARS",
     "SYSTEM_PROMPT",
     "Ruling",
     "build_message",
+    "judge_reply",
     "judge_with",
     "quoted_from",
     "rule",

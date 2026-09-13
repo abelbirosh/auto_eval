@@ -21,7 +21,8 @@ venv/
 task.md
 task.json
 
-# Written suites and run results. Both are outputs: a suite can be rebuilt from
-# its spec, and a run is a measurement of one moment.
+# Written suites, run results and boards. All three are outputs: a suite can be
+# rebuilt from its spec, and a run or a board is a measurement of one moment.
 runs/
 suites/
+boards/

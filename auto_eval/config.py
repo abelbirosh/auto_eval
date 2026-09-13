@@ -8,6 +8,7 @@ exactly once.
 from __future__ import annotations
 
 import os
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -33,19 +34,29 @@ RUNS_DIR_VAR = "AUTO_EVAL_RUNS_DIR"
 DEFAULT_RUNS_DIR = "runs"
 
 _ENV_LOADED = False
+# Two callers on two threads used to race here: the first set the flag before it
+# had read the file, and the second sailed past it and found no key. Everything
+# that runs cases or board rows in parallel reaches this, so it is locked.
+_ENV_LOCK = threading.Lock()
 
 
 def load_env(start: Optional[Path] = None) -> Optional[Path]:
     """Load the nearest `.env` walking up from `start`. Real env vars win.
 
-    Idempotent: repeated calls are a no-op, so importing this module from
-    several places does not re-read the file.
+    Idempotent and thread-safe: repeated calls are a no-op, and a caller that
+    arrives while the file is being read waits for it rather than concluding
+    there is no key.
     """
     global _ENV_LOADED
-    if _ENV_LOADED:
-        return None
-    _ENV_LOADED = True
+    with _ENV_LOCK:
+        if _ENV_LOADED:
+            return None
+        found = _read_env(start)
+        _ENV_LOADED = True
+        return found
 
+
+def _read_env(start: Optional[Path]) -> Optional[Path]:
     try:
         from dotenv import load_dotenv
     except ImportError:  # python-dotenv is optional; plain env vars still work
