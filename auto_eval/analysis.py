@@ -137,6 +137,10 @@ class ResourceAnalysis(BaseModel):
         default=0,
         description="Claims dropped because the source did not bear them out.",
     )
+    self_reported: bool = Field(
+        default=False,
+        description="Published by a system under test; carried over from the source.",
+    )
 
 
 class AnalysisReport(BaseModel):
@@ -426,6 +430,14 @@ def analyze_sources(
     blocked = [r for r in resources if r.plan and r.plan.blockers]
     if blocked:
         notes.append("Behind gating: " + ", ".join(r.source for r in blocked) + ".")
+    own = [r for r in resources if r.self_reported]
+    if own:
+        notes.append(
+            "Written by a system under test: "
+            + ", ".join(r.source for r in own)
+            + ". Fetching these gets you what the API returns and what it charges, "
+            "which is worth having - but not what the right answer is."
+        )
 
     return AnalysisReport(subject=spec.subject.name, resources=resources, notes=notes)
 
@@ -447,6 +459,7 @@ def _analyze_one(
         kind=source.kind,
         reachability=Reachability.NOT_CHECKED,
         covers_kpis=list(source.covers_kpis),
+        self_reported=source.self_reported,
     )
 
     dataset = hf_dataset_id(source.url)
@@ -527,6 +540,17 @@ def _analyze_one(
     usability = page_assessment.contains
     if usability is Usability.BASELINES and not baselines:
         usability = Usability.BACKGROUND
+    caveats = list(page_assessment.caveats)
+    if source.self_reported:
+        # However the page reads, a system cannot state the correct answer about
+        # itself. The numbers stay, labelled as the vendor's own.
+        if usability is Usability.GROUND_TRUTH:
+            usability = Usability.BASELINES if baselines else Usability.BACKGROUND
+        caveats.insert(
+            0,
+            "Published by a system under test: every number here is self-reported "
+            "and cannot score the system that published it.",
+        )
 
     plan = (
         DownloadPlan(
@@ -548,7 +572,7 @@ def _analyze_one(
             "baselines": baselines,
             "plan": plan,
             "effort": page_assessment.effort,
-            "caveats": list(page_assessment.caveats),
+            "caveats": caveats,
             "discarded": discarded,
         }
     )

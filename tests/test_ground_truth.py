@@ -196,6 +196,134 @@ def test_a_source_tied_to_no_kpi_is_listed_and_flagged(full_spec):
     assert any("Not tied to a specific KPI" in note for note in report.notes)
 
 
+# --- a system cannot be the ground truth for its own score ----------------
+
+
+@pytest.fixture
+def comparison_spec(full_spec):
+    """The shape that goes wrong: several named vendors, compared against each other."""
+    return full_spec.model_copy(
+        update={
+            "title": "Company enrichment comparison",
+            "summary": (
+                "Compare Apollo, People Data Labs, Exa, and Parallel for company "
+                "enrichment on mid-market SaaS companies."
+            ),
+            "subject": full_spec.subject.model_copy(
+                update={
+                    "name": "company enrichment providers",
+                    "description": "Four company enrichment APIs, on the same records.",
+                }
+            ),
+        }
+    )
+
+
+def test_a_vendors_own_page_is_marked_when_that_vendor_is_under_test(comparison_spec):
+    report = assess(
+        comparison_spec,
+        findings(
+            source(
+                name="Apollo API reference",
+                kind=SourceKind.VENDOR_CLAIM,
+                url="https://docs.apollo.io/reference/organization-search",
+                publisher="Apollo",
+            )
+        ),
+    )
+    assert report.sources[0].self_reported is True
+    assert any("published by a system under test" in note for note in report.notes)
+
+
+def test_a_multi_word_vendor_is_recognised_from_its_domain(comparison_spec):
+    report = assess(
+        comparison_spec,
+        findings(
+            source(
+                name="Company enrichment endpoints",
+                url="https://docs.peopledatalabs.com/docs/company-endpoints",
+            )
+        ),
+    )
+    assert report.sources[0].self_reported is True
+
+
+def test_a_short_vendor_name_still_matches(comparison_spec):
+    report = assess(
+        comparison_spec,
+        findings(source(name="Websets", url="https://docs.exa.ai/websets")),
+    )
+    assert report.sources[0].self_reported is True
+
+
+def test_an_independent_benchmark_is_left_alone(comparison_spec):
+    report = assess(
+        comparison_spec,
+        findings(
+            source(
+                name="Enrichment benchmark",
+                kind=SourceKind.BENCHMARK,
+                url="https://openbenchmarks.example/company-enrichment",
+            )
+        ),
+    )
+    assert report.sources[0].self_reported is False
+    assert report.verdict is Availability.LABELLED_DATA
+
+
+def test_a_repository_host_the_spec_names_is_not_a_publisher(full_spec):
+    spec = full_spec.model_copy(
+        update={"summary": "Evaluate the extractor, whose code is on GitHub."}
+    )
+    report = assess(
+        spec,
+        findings(
+            source(kind=SourceKind.DATASET, url="https://github.com/someone/invoices")
+        ),
+    )
+    assert report.sources[0].self_reported is False
+
+
+def test_self_reported_numbers_do_not_become_a_baseline(comparison_spec):
+    report = assess(
+        comparison_spec,
+        findings(
+            source(
+                name="Apollo accuracy claim",
+                kind=SourceKind.VENDOR_CLAIM,
+                url="https://www.apollo.io/product",
+                fit=Fit.DIRECT,
+                baselines=[BaselineValue(metric="accuracy", value="92.6%")],
+            )
+        ),
+    )
+    # The number is kept and shown; it just cannot be what the vendor is scored against.
+    assert report.sources[0].baselines
+    assert report.kpi_coverage[0].coverage is Coverage.REFERENCE
+    assert report.verdict is Availability.REFERENCE_ONLY
+
+
+def test_an_independent_source_still_carries_the_kpi(comparison_spec):
+    report = assess(
+        comparison_spec,
+        findings(
+            source(
+                name="Apollo docs",
+                kind=SourceKind.VENDOR_CLAIM,
+                url="https://docs.apollo.io/reference",
+                baselines=[BaselineValue(metric="accuracy", value="92.6%")],
+            ),
+            source(
+                name="Registry extract",
+                kind=SourceKind.DATASET,
+                url="https://opencorporates.example/bulk",
+            ),
+        ),
+    )
+    assert report.kpi_coverage[0].coverage is Coverage.LABELLED
+    assert [s.self_reported for s in report.sources] == [True, False]
+
+
 def test_the_report_records_whether_we_already_hold_labels(full_spec, sparse_spec):
     assert assess(full_spec, findings()).internal_ground_truth is True
     assert assess(sparse_spec, findings()).internal_ground_truth is False

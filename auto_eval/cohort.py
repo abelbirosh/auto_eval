@@ -142,6 +142,14 @@ class System(BaseModel):
         """Whether this row can be run, and what is missing if not."""
         if self.needs_endpoint and self.endpoint is None:
             return False, f"{self.label} has no endpoint to call."
+        if self.endpoint is not None and not self.endpoint.url.strip():
+            # A skeleton row waiting to be filled in. Saying so here is the
+            # difference between a row reported as not run and a row that is
+            # called, fails, and reads as a vendor scoring zero.
+            return False, (
+                f"{self.label} has no endpoint URL yet"
+                + (f" - the shape is in {self.docs_url}." if self.docs_url else ".")
+            )
         if self.endpoint is not None:
             missing = self.endpoint.missing()
             if missing:

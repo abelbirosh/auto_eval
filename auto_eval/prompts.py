@@ -140,6 +140,16 @@ date or version if the source gives one. Do not convert units or round.
 same task and same metric, usable as-is; `adaptable` = needs a subset, a \
 reformat, or a changed metric; `contextual` = a reference point only. Most \
 sources are `adaptable` or `contextual`; reserve `direct` for a real match.
+- A system under test cannot be the ground truth for its own score. Where the \
+spec names the systems being evaluated, their own documentation, pricing pages, \
+marketing and benchmarks are `vendor_claim` and `contextual` at best - never \
+`direct`, never the answer to "what is correct". Keep searching for someone \
+independent: an academic or journalistic comparison, a public registry or \
+filing that states the fact itself, a third-party benchmark. Report the \
+vendors' own pages only for what they genuinely settle, such as what an API \
+returns or what it charges, and say in `caveats` that it is self-reported. \
+Finding only vendor pages means there is no public ground truth, and saying so \
+is the useful answer.
 - `covers_kpis` must repeat KPI names from the spec verbatim. Leave it empty if \
 a source does not speak to any of them.
 - Record `access` and `licence` only from what the page states; leave them \

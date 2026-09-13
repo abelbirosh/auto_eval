@@ -379,6 +379,43 @@ def test_a_page_claiming_numbers_it_does_not_have_falls_back_to_background(full_
     assert analysis.resources[0].discarded == 1
 
 
+def test_a_vendors_own_page_cannot_be_promoted_to_ground_truth(full_spec):
+    # The identifier already marked it; the analysis must not talk it back up,
+    # whatever the page says about itself.
+    client = FakeClient(
+        PageAssessment(
+            contains=Usability.GROUND_TRUTH,
+            summary="Our accuracy, measured by us.",
+            baselines=[
+                QuotedBaseline(
+                    metric="field accuracy",
+                    value="92.4%",
+                    quote="LayoutLMv3 reaches 92.4% field accuracy on the held-out set",
+                )
+            ],
+        )
+    )
+    analysis = analyze_sources(
+        full_spec,
+        report(
+            source(
+                name="Vendor docs",
+                kind=SourceKind.VENDOR_CLAIM,
+                url="https://vendor.example/accuracy",
+                self_reported=True,
+            )
+        ),
+        client=client,
+        text_fetcher=lambda url: Fetched(url=url, ok=True, status=200, text=PAGE),
+    )
+
+    resource = analysis.resources[0]
+    assert resource.self_reported is True
+    assert resource.usability is Usability.BASELINES
+    assert "self-reported" in resource.caveats[0]
+    assert any("system under test" in note for note in analysis.notes)
+
+
 def test_a_dead_link_is_reported_not_swallowed(full_spec):
     analysis = analyze_sources(
         full_spec,

@@ -50,6 +50,32 @@ WEB_SEARCH_TOOL_FALLBACK = "web_search_preview"
 # More than this and the report stops being something a person reads.
 MAX_SOURCES = 8
 
+# Hosts that publish other people's work rather than their own claims. A
+# benchmark living on one of these is not self-reported just because the spec
+# happens to name the host.
+NEUTRAL_HOSTS = frozenset(
+    {
+        "arxiv",
+        "figshare",
+        "github",
+        "gitlab",
+        "google",
+        "huggingface",
+        "kaggle",
+        "medium",
+        "openreview",
+        "paperswithcode",
+        "substack",
+        "wikimedia",
+        "wikipedia",
+        "zenodo",
+    }
+)
+
+# Below this length a squashed name matches inside unrelated words, so the
+# squashed comparison is only made for names long enough to be distinctive.
+MIN_SQUASHED_NAME = 6
+
 
 class GroundTruthError(ClassifierError):
     """Raised when the ground-truth search could not be run or parsed."""
@@ -148,6 +174,13 @@ class ExternalSource(BaseModel):
     baselines: List[BaselineValue] = Field(default_factory=list)
     caveats: Optional[str] = Field(
         default=None, description="Why it might not transfer: age, domain, saturation."
+    )
+    self_reported: bool = Field(
+        default=False,
+        description=(
+            "Published by a system this evaluation is testing. Computed in `assess` "
+            "from the spec, never taken from the model."
+        ),
     )
 
 
@@ -288,10 +321,93 @@ def _norm_name(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
 
 
+# --------------------------------------------------------------------------
+# Who published it
+# --------------------------------------------------------------------------
+#
+# A vendor's own page is evidence about that vendor's marketing, not about its
+# accuracy. When the thing under test is that vendor - and on a comparison, it
+# is every vendor on the list - its own documentation cannot be the ground truth
+# or the baseline for its own score, however precise the number on it looks. So
+# the sources published by a party under test are found here, kept in the report
+# for context, and excluded from what the verdict is computed from.
+
+# Suffixes that are not the name of anyone: `example.co.uk` is published by
+# `example`, not by `co`.
+_PUBLIC_SUFFIX_PARTS = frozenset({"ac", "co", "com", "edu", "gov", "net", "org"})
+
+
+def _host_label(url: str) -> str:
+    """The registrable name in a URL: `docs.apollo.io` -> `apollo`."""
+    host = urlsplit(url.strip()).netloc.lower().split(":")[0]
+    parts = [part for part in host.split(".") if part]
+    if len(parts) < 2:
+        return ""
+    label = parts[-2]
+    if label in _PUBLIC_SUFFIX_PARTS and len(parts) >= 3:
+        label = parts[-3]
+    return label
+
+
+def subject_text(spec: TaskSpec) -> str:
+    """Everything in the spec that names what is being tested.
+
+    Only the fields that describe the subject: a KPI definition or a constraint
+    can mention a vendor the evaluation is not about, and matching on those
+    would demote sources for no reason.
+    """
+    subject = spec.subject
+    return " ".join(
+        [
+            spec.title,
+            spec.summary,
+            subject.name,
+            subject.description,
+            subject.interface or "",
+            *subject.in_scope,
+            *subject.out_of_scope,
+        ]
+    )
+
+
+def _names(text: str) -> Tuple[str, str]:
+    """The two forms a name is matched in: lowercased, and with the gaps closed."""
+    lowered = " ".join(text.lower().split())
+    return lowered, re.sub(r"[^a-z0-9]+", "", lowered)
+
+
+def _under_test(name: str, spec_lower: str, spec_squashed: str) -> bool:
+    """Whether `name` is one of the things the spec says it is testing."""
+    lowered, squashed = _names(name)
+    if len(squashed) < 3:
+        return False
+    if re.search(r"\b" + re.escape(lowered) + r"\b", spec_lower):
+        return True
+    # `peopledatalabs` never appears with those word boundaries in "People Data
+    # Labs", so a host label is also matched against the closed-up spec - but
+    # only when it is long enough not to land inside an unrelated word.
+    return len(squashed) >= MIN_SQUASHED_NAME and squashed in spec_squashed
+
+
+def self_reported(source: ExternalSource, spec: TaskSpec) -> bool:
+    """Whether this source is published by a system the spec puts under test."""
+    spec_lower, spec_squashed = _names(subject_text(spec))
+    label = _host_label(source.url)
+    if (
+        label
+        and label not in NEUTRAL_HOSTS
+        and _under_test(label, spec_lower, spec_squashed)
+    ):
+        return True
+    publisher = (source.publisher or "").strip()
+    return bool(publisher) and _under_test(publisher, spec_lower, spec_squashed)
+
+
 def _clean_sources(
-    sources: Sequence[ExternalSource], kpi_names: Sequence[str]
+    sources: Sequence[ExternalSource], spec: TaskSpec
 ) -> Tuple[List[ExternalSource], List[str]]:
-    """Drop unusable sources, dedupe by URL, and align `covers_kpis` to the spec."""
+    """Drop unusable sources, dedupe by URL, align `covers_kpis`, mark self-reports."""
+    kpi_names = [kpi.name for kpi in spec.kpis]
     kept: List[ExternalSource] = []
     seen: set = set()
     notes: List[str] = []
@@ -314,7 +430,14 @@ def _clean_sources(
             match = by_norm.get(_norm_name(claimed))
             if match and match not in aligned:
                 aligned.append(match)
-        kept.append(source.model_copy(update={"covers_kpis": aligned}))
+        kept.append(
+            source.model_copy(
+                update={
+                    "covers_kpis": aligned,
+                    "self_reported": self_reported(source, spec),
+                }
+            )
+        )
 
     if dropped:
         notes.append(
@@ -331,16 +454,28 @@ def _clean_sources(
     if len(kept) > MAX_SOURCES:
         notes.append(f"Showing the first {MAX_SOURCES} of {len(kept)} sources found.")
         kept = kept[:MAX_SOURCES]
+    own = [s.name for s in kept if s.self_reported]
+    if own:
+        notes.append(
+            f"{len(own)} source(s) are published by a system under test: "
+            + ", ".join(own)
+            + ". A vendor cannot be the ground truth for its own score, so these are "
+            "kept as context and left out of the coverage above. Anchor on an "
+            "independent measurement, or label a sample yourself."
+        )
     return kept, notes
 
 
 def _coverage_for(sources: Sequence[ExternalSource]) -> Coverage:
     if not sources:
         return Coverage.NONE
-    usable = [s for s in sources if s.fit in USABLE_FITS]
+    # A system's own page is context whatever it claims, so the verdict is
+    # computed from the independent sources alone.
+    independent = [s for s in sources if not s.self_reported]
+    usable = [s for s in independent if s.fit in USABLE_FITS]
     if any(s.kind in LABELLING_KINDS for s in usable):
         return Coverage.LABELLED
-    if any(s.baselines for s in sources) or any(
+    if any(s.baselines for s in independent) or any(
         s.kind in BASELINE_KINDS for s in usable
     ):
         return Coverage.BASELINE
@@ -354,7 +489,7 @@ def assess(
 ) -> GroundTruthReport:
     """Turn raw findings into a report. Pure; this is where the verdict is made."""
     kpi_names = [kpi.name for kpi in spec.kpis]
-    sources, notes = _clean_sources(findings.sources, kpi_names)
+    sources, notes = _clean_sources(findings.sources, spec)
 
     coverage: List[KPICoverage] = []
     for name in kpi_names:
@@ -503,6 +638,7 @@ def _as_ground_truth_error(
 
 __all__ = [
     "MAX_SOURCES",
+    "NEUTRAL_HOSTS",
     "Access",
     "Availability",
     "BaselineValue",
@@ -518,4 +654,6 @@ __all__ = [
     "assess",
     "gate",
     "identify",
+    "self_reported",
+    "subject_text",
 ]
