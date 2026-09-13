@@ -1,57 +1,88 @@
-# auto_eval
+# Auto-Eval
 
-Builds evaluations for software and AI systems from a plain description of what
-you want tested.
+**Turn a description of what you want tested into a reproducible benchmark.**
 
-## Components
+Auto-Eval is an open-source system for automatically designing, building, running, and maintaining evaluation suites for software and AI systems.
 
-| | Component | Status |
-| --- | --- | --- |
-| 1 | [Classifier](classifier/) — free-form request → structured task spec | built |
-| 2 | [Ground truth identifier](ground_truth/) — find public baselines and labelled data, and say what is behind each link | built |
-| 3 | [Benchmark catalogue](auto_eval/benchmarks.py) — ten real public suites, matched onto a spec without a search | built |
-| 4 | [Agent suite builder](suite/) — profile an agent, then write the cases and the checks for it | built |
+Give it a goal like:
 
-Three more to come.
-
-```bash
-auto-eval benchmarks                    # the catalogue
-auto-eval benchmarks -s task.json       # the ones that fit your spec
-auto-eval profile -s task.json          # what it takes to run the agent, and whether we can
-auto-eval author  -s task.json -o suites/support-agent
-auto-eval suite   suites/support-agent  # read the written suite back
+```text
+Compare company enrichment APIs on accuracy, coverage, latency, and cost.
 ```
 
-Blocks 3 and 4 are both offline and deterministic: no API key, no network, same
-answer every time. A suite carries a digest over its own contents, so a number
-reported later can be traced to the exact cases that produced it.
+Auto-Eval turns that into:
 
-The catalogue is the deterministic counterpart to the ground-truth search: the
-model is good at finding something specific to your task and bad at reliably
-recalling whether a standard suite exists, so the standard suites are a lookup
-table. No API key, no network, same answer every time. It holds no scores — a
-stale leaderboard number is worse than none, so `analysis` quotes those from the
-live page instead.
-
-## Development
-
-```bash
-pip install -e ".[dev,web]"
-pytest                     # the suite stubs the model client - no API key needed
-ruff check . && ruff format --check .
-mypy
+```text
+Free-form request
+→ structured evaluation spec
+→ benchmark / ground-truth discovery
+→ cohort + test-case construction
+→ evaluation harness
+→ execution
+→ scoring
+→ comparison + reporting
 ```
 
-`pre-commit install` runs the ruff checks on each commit, so CI is rarely the
-first place a lint failure shows up.
+## What it handles
 
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the same three
-commands on every push and pull request, tests on 3.10 and 3.14 - the ends of
-the supported range - and builds the wheel to check the CLI and the packaged UI
-still work from a clean install.
+* Extracts the system under test, KPIs, scope, and success criteria
+* Finds relevant public benchmarks, datasets, and baselines
+* Builds representative test cases and coverage matrices
+* Constructs or verifies ground truth when needed
+* Generates adapters for APIs, agents, CLIs, and model endpoints
+* Runs systems under identical conditions
+* Measures accuracy, coverage, latency, cost, tokens, and failures
+* Uses deterministic checks, LLM judges, or human review as appropriate
+* Produces versioned, auditable benchmark results
+* Re-runs benchmarks over time and detects regressions
 
-Releases ([`.github/workflows/release.yml`](.github/workflows/release.yml)) are
-cut by pushing a `vX.Y.Z` tag that matches `version` in `pyproject.toml`; the
-built distributions are attached to a GitHub release. Publishing to PyPI is off
-until the repository variable `PUBLISH_TO_PYPI` is set to `true` and a trusted
-publisher is configured.
+## Example
+
+```text
+"Compare Apollo, People Data Labs, Exa, and Parallel
+for company enrichment."
+```
+
+Auto-Eval can produce:
+
+```text
+benchmark/
+├── spec.json
+├── methodology.md
+├── cohort.jsonl
+├── ground_truth.jsonl
+├── adapters/
+├── cases/
+├── scorers/
+├── raw_runs/
+└── results.json
+```
+
+## Design Principles
+
+**Deterministic where possible.**
+Models assist with extraction, research, and semantic judgment; rules handle validation, sampling, scoring, and aggregation where possible.
+
+**Evidence over confidence.**
+Ground truth and judgments retain their supporting evidence.
+
+**Ground truth ≠ scoring policy.**
+What is true and what counts as correct are stored separately.
+
+**Reproducible by default.**
+Specs, suites, cases, scoring rules, and results are versioned and content-addressed.
+
+## Vision
+
+Building a serious benchmark currently requires manual research, dataset design, integration work, scoring logic, and reporting.
+
+Auto-Eval aims to reduce that workflow to:
+
+```text
+Describe the evaluation
+→ inspect the methodology
+→ run the benchmark
+→ reproduce the result
+```
+
+**Auto-Eval is infrastructure for turning evaluation questions into evidence.**
