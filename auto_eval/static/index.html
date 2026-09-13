@@ -131,6 +131,20 @@
     background: var(--tint); padding: 16px; border-radius: 0; overflow-x: auto;
     font-size: 12.5px; line-height: 1.55; margin: 10px 0 0;
   }
+  /* Run verdicts: three words that always mean the same thing. */
+  .badge.passed { color: var(--ready); }
+  .badge.failed, .badge.error { color: var(--blocked); }
+  .badge.blocked { color: var(--needs); }
+
+  /* The benchmark form: four decisions, on one line. */
+  .row label { font-size: 12.5px; color: var(--muted); display: inline-flex; gap: 6px; align-items: center; }
+  input[type=number], select {
+    font: inherit; font-size: 13px; color: var(--ink); background: transparent;
+    border: 0; border-bottom: 1px solid var(--rule-2); padding: 1px 0; width: 74px;
+  }
+  select { width: auto; }
+  input[type=number]:focus, select:focus { outline: 0; border-bottom-color: var(--accent); }
+
   details { margin-top: 18px; border-top: 1px solid var(--rule); padding-top: 14px; }
   details.inline { margin: 0; border-top: 0; padding-top: 0; }
   details.inline ul { margin-top: 6px; }
@@ -161,6 +175,7 @@
   <section class="result" id="result" hidden></section>
   <section class="result" id="gtresult" hidden></section>
   <section class="result" id="exresult" hidden></section>
+  <section class="result" id="runresult" hidden></section>
 </div>
 
 <script>
@@ -175,10 +190,13 @@ function banner(kind, msg) {
   $("banner").innerHTML = msg ? `<div class="banner ${kind}">${esc(msg)}</div>` : "";
 }
 
+let healthState = null;
+
 async function health() {
   try {
     const r = await fetch("/api/health");
     const h = await r.json();
+    healthState = h;
     $("meta").textContent = h.model;
     if (!h.has_key) banner("warn", "No OPENAI_API_KEY found. Add it to your .env, then restart the server.");
   } catch { /* server info is a nicety; the form still works */ }
@@ -378,6 +396,7 @@ function render(data) {
   lastReport = null;
   $("gtresult").hidden = true;
   $("exresult").hidden = true;
+  $("runresult").hidden = true;
   const gtBtn = $("gt");
   if (gtBtn) gtBtn.onclick = groundTruth;
   wireAnswers(questions);
@@ -419,66 +438,84 @@ function answerState() {
   }
 }
 
+// Tables wherever a table will do. Everything that reads as prose - a
+// description, a caveat, a quoted span - folds away under one summary, so the
+// first screen is the shape of the answer rather than the whole of it.
+const cell = (v) => v === null || v === undefined || v === "" ? "&mdash;" : esc(v);
+const link = (url, text) => `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(text || url)}</a>`;
+const host = (url) => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; } };
+const table = (headers, rows) => `<div class="scroll"><table>
+  <tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr>
+  ${rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join("")}</tr>`).join("")}</table></div>`;
+
 function renderReport(data) {
   const r = data.report;
 
-  const coverage = r.kpi_coverage.length ? `<div class="scroll"><table>
-      <tr><th>KPI</th><th>What exists</th><th>Sources</th></tr>
-      ${r.kpi_coverage.map(k => `<tr><td>${esc(k.kpi)}</td>
-        <td>${esc(COVERAGE[k.coverage] || k.coverage)}</td>
-        <td>${k.sources.length ? esc(k.sources.join(", ")) : "&mdash;"}</td></tr>`).join("")}
-    </table></div>`
+  const coverage = r.kpi_coverage.length
+    ? table(["KPI", "What exists", "Sources"], r.kpi_coverage.map(k =>
+        [esc(k.kpi), esc(COVERAGE[k.coverage] || k.coverage),
+         k.sources.length ? esc(k.sources.join(", ")) : "&mdash;"]))
     : `<p class="none">No KPIs to cover.</p>`;
 
-  const sources = r.sources.length ? r.sources.map(src => `<div class="src">
-      <div class="head"><h3>${esc(src.name)}</h3>
-        <code>${esc(src.kind)}</code>
-        <span class="meta">fit ${esc(src.fit)} &middot; access ${esc(src.access)}${
+  const sources = r.sources.length
+    ? table(["Source", "Kind", "Fit", "Access", "Published", "Covers", "Baselines"],
+        r.sources.map(src => [
+          link(src.url, src.name),
+          cell(src.kind),
+          cell(src.fit),
+          cell(src.access),
+          cell(src.released),
+          src.covers_kpis.length ? esc(src.covers_kpis.join(", ")) : "&mdash;",
+          src.baselines.length ? `${src.baselines.length}` : "&mdash;",
+        ]))
+    : `<p class="none">Nothing usable found online for this task.</p>`;
+
+  const detail = r.sources.map(src => `<div class="src">
+      <div class="head"><h3>${esc(src.name)}</h3><code>${esc(src.kind)}</code>
+        <span class="meta">${src.publisher ? esc(src.publisher) : ""}${
           src.licence ? " &middot; " + esc(src.licence) : ""}</span></div>
       <p>${esc(src.description)}</p>
-      <p><a href="${esc(src.url)}" target="_blank" rel="noopener noreferrer">${esc(src.url)}</a></p>
-      ${src.covers_kpis.length ? `<p class="why">Covers: ${esc(src.covers_kpis.join(", "))}</p>` : ""}
-      ${src.baselines.length ? `<div class="scroll"><table>
-        <tr><th>Metric</th><th>Value</th><th>System</th><th>As of</th></tr>
-        ${src.baselines.map(b => `<tr><td>${esc(b.metric)}</td><td>${esc(b.value)}</td>
-          <td>${b.system ? esc(b.system) : "&mdash;"}</td>
-          <td>${b.as_of ? esc(b.as_of) : "&mdash;"}</td></tr>`).join("")}
-       </table></div>` : ""}
+      ${src.baselines.length ? table(["Metric", "Value", "System", "As of"],
+        src.baselines.map(b => [esc(b.metric), esc(b.value), cell(b.system), cell(b.as_of)])) : ""}
       ${src.caveats ? `<p class="why">Caveat: ${esc(src.caveats)}</p>` : ""}
-    </div>`).join("")
-    : `<p class="none">Nothing usable found online for this task.</p>`;
+    </div>`).join("");
 
   $("gtresult").innerHTML = `
     <div class="verdict">
       <span class="badge ${esc(r.verdict)}">${esc(r.verdict.replace(/_/g, " "))}</span>
       <strong>Ground truth for ${esc(r.subject)}</strong>
-      <span class="meta">${r.sources.length} source(s)</span>
+      <span class="meta">${r.sources.length} source(s) &middot; ${r.searches.length} search(es)</span>
     </div>
-    <p>${esc(r.recommendation)}</p>
-    <p class="why">${r.internal_ground_truth
-      ? "You already hold your own labels, so these are for comparison rather than scoring."
-      : "You hold no labels of your own, so anything usable below saves labelling work."}</p>
+    <table class="facts">
+      <tr><th>Use</th><td>${esc(r.recommendation || "no recommendation returned")}</td></tr>
+      <tr><th>Own labels</th><td>${r.internal_ground_truth
+        ? "yes &mdash; public sources are for comparison, not scoring"
+        : "none &mdash; anything usable below saves labelling work"}</td></tr>
+    </table>
 
     <h2>Coverage by KPI</h2>${coverage}
     <h2>Sources</h2>${sources}
-    <h2>Notes</h2>${list(r.notes, "none")}
-    <h2>Searches run</h2>${list(r.searches, "none recorded")}
-
+    ${r.notes.length ? `<details><summary>${r.notes.length} note(s) on how to read these</summary>${list(r.notes, "")}</details>` : ""}
+    ${r.sources.length ? `<details><summary>What each source is, and its caveats</summary>${detail}</details>` : ""}
+    ${r.searches.length ? `<details><summary>Searches run</summary>${list(r.searches, "none recorded")}</details>` : ""}
     <details><summary>Report (markdown)</summary><pre>${esc(data.markdown)}</pre></details>
     <details><summary>Raw JSON</summary><pre>${esc(JSON.stringify(r, null, 2))}</pre></details>
 
-    <h2>Source analysis</h2>
+    <h2>Look inside the sources</h2>
     ${r.sources.length
-      ? `<p>Open each source and see what is really behind it &mdash; whether the link
-         resolves, a dataset's columns, splits, licence and gating, and what a later
-         step would have to fetch. Nothing is downloaded here.</p>
+      ? `<p class="why">Opens each link and reports what is really behind it &mdash; columns,
+         splits, licence, gating. Nothing is downloaded.</p>
          <div class="row"><button class="primary" id="ex">Analyze sources</button></div>`
-      : `<p class="none">No sources to analyse.</p>`}`;
+      : `<p class="none">No sources to analyse.</p>`}
+
+    ${benchmarkForm()}`;
 
   lastReport = r;
   $("exresult").hidden = true;
+  $("runresult").hidden = true;
   const exBtn = $("ex");
   if (exBtn) exBtn.onclick = runAnalyze;
+  wireBenchmark();
   $("gtresult").hidden = false;
 }
 
@@ -486,47 +523,45 @@ function renderAnalysis(data) {
   const a = data.analysis;
   const plans = a.resources.filter(r => r.plan).map(r => r.plan);
 
-  const fetchList = plans.length ? `<div class="scroll"><table>
-      <tr><th>What</th><th>From</th><th>Blockers</th></tr>
-      ${plans.map(p => `<tr><td>${esc(p.what)}</td>
-        <td><a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.url)}</a></td>
-        <td>${p.blockers ? esc(p.blockers) : "&mdash;"}</td></tr>`).join("")}
-    </table></div>`
-    : `<p class="none">No source offered anything worth fetching.</p>`;
+  const resources = a.resources.length
+    ? table(["Source", "Link", "Reachable", "What is behind it", "Effort", "To fetch later"],
+        a.resources.map(r => [
+          esc(r.source) + (r.covers_kpis.length ? `<br><span class="why">${esc(r.covers_kpis.join(", "))}</span>` : ""),
+          link(r.url, host(r.url)),
+          esc(REACH[r.reachability] || r.reachability),
+          esc(USABILITY[r.usability] || r.usability),
+          cell(r.effort),
+          r.plan ? esc(r.plan.what) + (r.plan.blockers ? `<br><span class="why">in the way: ${esc(r.plan.blockers)}</span>` : "") : "&mdash;",
+        ]))
+    : `<p class="none">Nothing to analyse.</p>`;
 
-  const datasetTable = (d) => `<table>
-      <tr><th>Columns</th><td>${d.columns.length ? esc(d.columns.join(", ")) : "&mdash;"}</td></tr>
-      <tr><th>Splits</th><td>${d.splits.length
-        ? esc(d.splits.map(s => s.rows ? `${s.name} (${s.rows.toLocaleString()} rows)` : s.name).join(", "))
-        : "&mdash;"}</td></tr>
-      <tr><th>Licence</th><td>${d.licence ? esc(d.licence) : '<span class="none">not stated</span>'}</td></tr>
-      <tr><th>Gated</th><td>${d.gated ? "yes" : "no"}</td></tr>
-      <tr><th>Downloads</th><td>${d.downloads != null ? d.downloads.toLocaleString() : "&mdash;"}</td></tr>
-      <tr><th>Last modified</th><td>${d.last_modified ? esc(d.last_modified) : "&mdash;"}</td></tr>
-    </table>`;
+  const datasets = a.resources.filter(r => r.dataset);
+  const datasetTable = datasets.length
+    ? table(["Source", "Columns", "Splits", "Licence", "Gated", "Downloads", "Last modified"],
+        datasets.map(r => [
+          esc(r.source),
+          r.dataset.columns.length ? esc(r.dataset.columns.join(", ")) : "&mdash;",
+          r.dataset.splits.length
+            ? esc(r.dataset.splits.map(s => s.rows ? `${s.name} (${s.rows.toLocaleString()})` : s.name).join(", "))
+            : "&mdash;",
+          cell(r.dataset.licence),
+          r.dataset.gated ? "yes" : "no",
+          r.dataset.downloads != null ? r.dataset.downloads.toLocaleString() : "&mdash;",
+          cell(r.dataset.last_modified),
+        ]))
+    : "";
 
-  const resources = a.resources.map(r => `<div class="src">
-      <div class="head"><h3>${esc(r.source)}</h3>
-        <code>${esc(r.kind)}</code>
-        <span class="meta">${esc(REACH[r.reachability] || r.reachability)} &middot;
-          ${esc(USABILITY[r.usability] || r.usability)}${r.effort ? " &middot; effort " + esc(r.effort) : ""}</span></div>
-      ${r.summary ? `<p>${esc(r.summary)}</p>` : ""}
-      <p><a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${esc(r.url)}</a></p>
-      ${r.detail ? `<p class="why">${esc(r.detail)}</p>` : ""}
-      ${r.covers_kpis.length ? `<p class="why">Covers: ${esc(r.covers_kpis.join(", "))}</p>` : ""}
-      ${r.dataset ? datasetTable(r.dataset) : ""}
-      ${r.plan ? `<p><strong>Fetch later:</strong> ${esc(r.plan.what)}${
-        r.plan.blockers ? ` <span class="why">(in the way: ${esc(r.plan.blockers)})</span>` : ""}</p>` : ""}
-      ${r.baselines.length ? `<div class="scroll"><table>
-        <tr><th>Metric</th><th>Value</th><th>System</th><th>As of</th><th>Quoted from</th></tr>
-        ${r.baselines.map(b => `<tr><td>${esc(b.metric)}</td><td>${esc(b.value)}</td>
-          <td>${b.system ? esc(b.system) : "&mdash;"}</td>
-          <td>${b.as_of ? esc(b.as_of) : "&mdash;"}</td>
-          <td><span class="why">${esc(preview(b.quote))}</span></td></tr>`).join("")}
-      </table></div>` : ""}
-      ${r.discarded ? `<p class="why">${r.discarded} claim(s) discarded: the page did not bear them out.</p>` : ""}
-      ${r.caveats.length ? list(r.caveats, "") : ""}
+  const quotes = a.resources.filter(r => r.baselines.length).map(r => `<div class="src">
+      <h3>${esc(r.source)}</h3>
+      ${table(["Metric", "Value", "System", "As of", "Quoted from"],
+        r.baselines.map(b => [esc(b.metric), esc(b.value), cell(b.system), cell(b.as_of),
+          `<span class="why">${esc(preview(b.quote))}</span>`]))}
     </div>`).join("");
+
+  const caveats = a.resources.filter(r => r.caveats.length || r.discarded).map(r =>
+    `<div class="src"><h3>${esc(r.source)}</h3>
+      ${r.discarded ? `<p class="why">${r.discarded} claim(s) discarded: the page did not bear them out.</p>` : ""}
+      ${r.caveats.length ? list(r.caveats, "") : ""}</div>`).join("");
 
   const withData = a.resources.filter(r => r.usability === "ground_truth").length;
 
@@ -534,16 +569,15 @@ function renderAnalysis(data) {
     <div class="verdict">
       <span class="badge ${withData ? "labelled_data" : "none_found"}">${withData} with data</span>
       <strong>Source analysis</strong>
-      <span class="meta">${a.resources.length} source(s) looked at &middot; nothing downloaded</span>
+      <span class="meta">${a.resources.length} opened &middot; ${plans.length} worth fetching &middot; nothing downloaded</span>
     </div>
-
-    <h2>What to fetch</h2>${fetchList}
-    <h2>Source by source</h2>${resources}
-    <h2>Notes</h2>${list(a.notes, "none")}
-
+    ${resources}
+    ${datasetTable ? `<h2>What the datasets hold</h2>${datasetTable}` : ""}
+    ${quotes ? `<details><summary>Baseline numbers, with the line each was quoted from</summary>${quotes}</details>` : ""}
+    ${caveats ? `<details><summary>Caveats and discarded claims</summary>${caveats}</details>` : ""}
+    ${a.notes.length ? `<details><summary>${a.notes.length} note(s)</summary>${list(a.notes, "")}</details>` : ""}
     <details><summary>Fetch plan (JSON)</summary><pre>${esc(JSON.stringify(plans, null, 2))}</pre></details>
-    <details><summary>Analysis (markdown)</summary><pre>${esc(data.markdown)}</pre></details>
-    <details><summary>Raw JSON</summary><pre>${esc(JSON.stringify(a, null, 2))}</pre></details>`;
+    <details><summary>Analysis (markdown)</summary><pre>${esc(data.markdown)}</pre></details>`;
   $("exresult").hidden = false;
 }
 
@@ -570,6 +604,179 @@ async function runAnalyze() {
     btn.disabled = false;
     btn.textContent = "Analyze sources";
   }
+}
+
+// --- the benchmark ------------------------------------------------------
+// Everything from here is mechanical: the suite is written from the spec by
+// rule, and then every case is run. So it is one button, with the four things
+// worth deciding next to it.
+
+function benchmarkForm() {
+  return `<h2>Benchmark</h2>
+    <p class="why">Writes the suite for this spec &mdash; offline, deterministic, same spec
+      same suite &mdash; then runs every case against the provider and scores it.</p>
+    <div class="row">
+      <label>samples <input type="number" id="b-samples" min="1" max="10" placeholder="auto"></label>
+      <label>first N cases <input type="number" id="b-limit" min="1" placeholder="all"></label>
+      <label>split <select id="b-split">
+        <option value="">all</option><option value="held_out">held out</option><option value="dev">dev</option>
+      </select></label>
+      <label><input type="checkbox" id="b-mock"> dry run (no provider call)</label>
+    </div>
+    <div class="row">
+      <button class="primary" id="test">Run the benchmark</button>
+      <span class="hint" id="test-hint"></span>
+    </div>`;
+}
+
+function wireBenchmark() {
+  const btn = $("test");
+  if (!btn) return;
+  btn.onclick = () => benchmark(false);
+  if (healthState && healthState.has_key === false) {
+    const mock = $("b-mock");
+    if (mock) mock.checked = true;
+  }
+}
+
+async function benchmark(force) {
+  if (!lastSpec) return;
+  const btn = $("test");
+  btn.disabled = true;
+  btn.textContent = "Writing the suite\u2026";
+  banner("", "");
+
+  const body = {
+    spec: lastSpec,
+    force,
+    samples: $("b-samples").value ? Number($("b-samples").value) : null,
+    limit: $("b-limit").value ? Number($("b-limit").value) : null,
+    split: $("b-split").value || null,
+    mock: $("b-mock").checked,
+  };
+
+  try {
+    const r = await fetch("/api/benchmark", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const job = await r.json();
+    if (r.status === 409) {
+      // The agent gate is closed: a suite written against an agent nobody can
+      // start is a document, not a test. Say so, and let it be overridden.
+      $("test-hint").innerHTML = `${esc(job.detail)}
+        <button id="force">Write it anyway</button>`;
+      $("force").onclick = () => benchmark(true);
+      return;
+    }
+    if (!r.ok) { banner("err", job.detail || `Could not start (${r.status})`); return; }
+    await pollRun(job);
+  } catch (e) {
+    banner("err", `Could not reach the server: ${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Run the benchmark";
+  }
+}
+
+async function pollRun(job) {
+  const hint = $("test-hint");
+  hint.textContent = `${job.cases} case(s) x ${Math.max(1, Math.round(job.total / Math.max(1, job.cases)))} sample(s) \u2014 starting\u2026`;
+  while (true) {
+    const r = await fetch(`/api/run/${job.job_id}`);
+    const now = await r.json();
+    if (!r.ok) { banner("err", now.detail || "Lost track of the run."); return; }
+    if (now.state === "running") {
+      hint.textContent = `${now.done} of ${now.total} run(s)` + (now.case_id ? ` \u2014 ${now.case_id}` : "");
+      await new Promise(done => setTimeout(done, 700));
+      continue;
+    }
+    if (now.state === "failed") {
+      hint.textContent = "";
+      banner("err", `The run failed: ${now.error}`);
+      return;
+    }
+    hint.textContent = `${now.done} run(s) \u2014 written to ${now.path}`;
+    const report = await fetch(`/api/runs/${encodeURIComponent(now.run_id)}`).then(x => x.json());
+    renderRun(report, now);
+    $("runresult").scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+}
+
+const pct = (v) => v === null || v === undefined ? '<span class="none">nothing settled</span>' : `${Math.round(v * 100)}%`;
+const STATUS_WORD = { passed: "passed", failed: "failed", blocked: "nothing runnable", error: "never ran" };
+
+function renderRun(r, job) {
+  const checks = r.overall.checks;
+  const spend = r.usage.usd === null || r.usage.usd === undefined ? "not priced" : `$${r.usage.usd.toFixed(4)}`;
+
+  const splits = table(["Split", "Cases", "Runs", "Passed", "Failed", "Errors", "Pass rate"],
+    [r.headline, r.dev, r.overall].map(s =>
+      [esc(s.label), s.cases, s.runs, s.passed, s.failed, s.errors, pct(s.pass_rate)]));
+
+  const kpis = table(["KPI", "Cases", "Passed", "Failed", "Blocked", "Pass rate"],
+    r.by_kpi.map(g => [esc(g.label), g.cases, g.checks.passed, g.checks.failed,
+      g.checks.blocked, pct(g.checks.pass_rate)]));
+
+  const kinds = table(["Check kind", "Passed", "Failed", "Blocked", "Pass rate"],
+    r.by_kind.map(g => [esc(g.label.replace(/_/g, " ")), g.checks.passed, g.checks.failed,
+      g.checks.blocked, pct(g.checks.pass_rate)]));
+
+  const reasons = new Map();
+  r.cases.forEach(c => c.blocked.forEach(b => reasons.set(b.reason, (reasons.get(b.reason) || 0) + 1)));
+  const blocked = reasons.size
+    ? table(["Checks", "Why not"], [...reasons.entries()].sort((a, b) => b[1] - a[1])
+        .map(([reason, n]) => [n, esc(reason)]))
+    : `<p class="none">Every check ran.</p>`;
+
+  const c = r.contamination;
+  const contamination = c
+    ? table(["Origin", "Cases", "Verdict", "Why"], c.by_origin.map(o =>
+        [o.url ? link(o.url, o.source) : esc(o.source), o.cases,
+         esc(o.verdict.replace(/_/g, " ")), `<span class="why">${esc(o.why)}</span>`]))
+    : "";
+
+  const failed = r.cases.filter(x => x.status !== "passed");
+  const failures = failed.length
+    ? table(["Case", "Behaviour", "Status", "Samples", "Failed checks", "Blocked"],
+        failed.slice(0, 25).map(x => [
+          `<code>${esc(x.case_id)}</code>`, esc(x.behaviour),
+          `<span class="badge ${esc(x.status)}">${esc(STATUS_WORD[x.status] || x.status)}</span>`,
+          `${x.passed}/${x.samples}`, x.checks_failed, x.checks_blocked]))
+    : `<p class="none">Every case passed.</p>`;
+
+  $("runresult").innerHTML = `
+    <div class="verdict">
+      <span class="badge ${r.headline.pass_rate === null ? "none_found" : "labelled_data"}">${pct(r.headline.pass_rate)} held out</span>
+      <strong>${esc(r.subject)}</strong>
+      <span class="meta">${esc(r.run_id)}${r.mock ? " &middot; dry run" : ""}</span>
+    </div>
+    <table class="facts">
+      <tr><th>Ran</th><td>${r.overall.cases} case(s) x ${r.samples} sample(s) = ${r.overall.runs} run(s)
+        against <code>${esc(r.model)}</code>${r.judge_model ? `, judged by <code>${esc(r.judge_model)}</code>` : ", no judge"}</td></tr>
+      <tr><th>Checks</th><td>${checks.passed} passed &middot; ${checks.failed} failed &middot;
+        <strong>${checks.blocked} could not run</strong> &middot; ${pct(checks.pass_rate)} of those that did</td></tr>
+      <tr><th>Cost</th><td>${(r.usage.tokens || 0).toLocaleString()} tokens &middot; ${spend} &middot; ${Math.round(r.seconds)}s</td></tr>
+      ${c ? `<tr><th>Contamination</th><td>${esc(c.verdict.replace(/_/g, " "))} &middot;
+        ${c.clean_cases} clean, ${c.unknown_cases} unknown, ${c.at_risk_cases} at risk${
+        c.cutoff ? ` &middot; cutoff ${esc(c.cutoff)}` : " &middot; no cutoff on file"}</td></tr>` : ""}
+      <tr><th>Suite</th><td><code>${esc(r.suite_digest)}</code> &middot; ${esc(job ? job.suite : "")}</td></tr>
+    </table>
+
+    ${r.warnings.length ? `<details open><summary>${r.warnings.length} thing(s) to read before quoting a number</summary>${list(r.warnings, "")}</details>` : ""}
+
+    <h2>Scores</h2>${splits}
+    <h2>By KPI</h2>${kpis}
+    <h2>What could not be checked</h2>${blocked}
+    <h2>Cases that did not pass</h2>${failures}
+    ${failed.length > 25 ? `<p class="why">${failed.length - 25} more in the dashboard.</p>` : ""}
+    <details><summary>By check kind</summary>${kinds}</details>
+    ${contamination ? `<details><summary>Where the cases came from</summary>${contamination}</details>` : ""}
+    <p><a href="/dashboard?run=${encodeURIComponent(r.run_id)}" target="_blank" rel="noopener">Open this run in the dashboard</a>
+      &mdash; every verdict, and the transcript it was read off.</p>`;
+  $("runresult").hidden = false;
 }
 
 async function groundTruth() {
@@ -647,6 +854,7 @@ $("clear").onclick = () => {
   $("result").hidden = true;
   $("gtresult").hidden = true;
   $("exresult").hidden = true;
+  $("runresult").hidden = true;
   lastSpec = null;
   lastReport = null;
   lastText = "";

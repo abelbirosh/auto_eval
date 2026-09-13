@@ -94,7 +94,9 @@ jobs:
           python -m venv /tmp/smoke
           /tmp/smoke/bin/pip install dist/*.whl
           /tmp/smoke/bin/auto-eval --help
-          /tmp/smoke/bin/python -c "import importlib.resources as r, auto_eval; assert (r.files('auto_eval') / 'static' / 'index.html').is_file()"
+          /tmp/smoke/bin/python -c "import importlib.resources as r, auto_eval; assert all((r.files('auto_eval') / 'static' / page).is_file() for page in ('index.html', 'dashboard.html'))"
+          # The offline blocks have to work from a clean install with no key.
+          /tmp/smoke/bin/auto-eval fresh > /dev/null
 
       - uses: actions/upload-artifact@v7
         with:

@@ -206,3 +206,22 @@ injected, so no test touches the network or spends money. The parts that decide
 what is kept — the gate, `assess`, `plan_for_dataset`, `choose_split`,
 `verify_baselines`, and the URL guards — are pure functions and are tested
 directly.
+
+## Dates, and why they decide what a source is worth
+
+Every source the search reports carries `released` — when the data itself was
+published, as the page states it, and null rather than guessed when it does not.
+That field is what separates a measurement from a memory test: anything
+published before a model's training cutoff may already be in that model's
+training data, and a high score on it cannot tell the two apart. The report
+names the sources that arrived without a date, so nobody quotes a number off one
+by accident.
+
+The search is told to prefer ground truth that resists this — suites refreshed
+on a schedule, suites whose answers were never published, anything released
+after the model stopped training — and to report the older standard suite as
+well where it fits, saying which is which.
+[`auto_eval/contamination.py`](../auto_eval/contamination.py) is the
+deterministic counterpart: published cutoffs with the page each was read from,
+and a small catalogue of contamination-resistant suites, printed by `auto-eval
+fresh --model <model>`.

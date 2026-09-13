@@ -289,3 +289,41 @@ def test_the_message_leaves_out_what_cannot_be_searched_for(full_spec):
     assert "target >= 95%" in message
     assert "Hand-labelled invoices (n=400)" in message
     assert "confidence" not in message.lower()
+
+
+def test_a_source_with_no_publication_date_is_called_out(full_spec):
+    """A score on data older than the model is partly a memory test."""
+    from auto_eval.ground_truth import (
+        Access,
+        ExternalSource,
+        Fit,
+        SourceFindings,
+        SourceKind,
+        assess,
+    )
+
+    findings = SourceFindings(
+        sources=[
+            ExternalSource(
+                name="Acme invoices",
+                kind=SourceKind.DATASET,
+                url="https://example.org/acme",
+                description="Labelled invoices.",
+                fit=Fit.DIRECT,
+                access=Access.OPEN,
+            ),
+            ExternalSource(
+                name="Fresh invoices",
+                kind=SourceKind.DATASET,
+                url="https://example.org/fresh",
+                description="Labelled invoices, dated.",
+                fit=Fit.DIRECT,
+                access=Access.OPEN,
+                released="2025-06",
+            ),
+        ],
+        recommendation="Use the dated one.",
+    )
+    report = assess(full_spec, findings)
+    dated = [note for note in report.notes if "no publication date" in note]
+    assert dated and "Acme invoices" in dated[0] and "Fresh invoices" not in dated[0]

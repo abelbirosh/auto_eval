@@ -389,3 +389,112 @@ def test_suite_on_an_empty_directory_exits_two_with_advice(tmp_path, capsys):
 
     assert main(["suite", str(tmp_path)]) == EXIT_INSUFFICIENT
     assert "auto-eval author" in capsys.readouterr().err
+
+
+# --- running a suite ------------------------------------------------------
+
+
+@pytest.fixture
+def suite_dir(tmp_path, agent_spec):
+    from auto_eval.suite import build, write
+
+    suite = build(agent_spec)
+    write(suite, tmp_path / "suite")
+    return tmp_path / "suite"
+
+
+def test_run_parser_defaults():
+    args = build_parser().parse_args(["run", "suites/x"])
+    assert args.suite == "suites/x"
+    assert args.model is None  # so AUTO_EVAL_SUBJECT_MODEL can supply it
+    assert args.split == "all"
+    assert args.mock is False
+
+
+def test_a_mock_run_needs_no_key_and_writes_a_report(suite_dir, tmp_path, capsys):
+    code = main(
+        [
+            "run",
+            str(suite_dir),
+            "--mock",
+            "--samples",
+            "1",
+            "--limit",
+            "3",
+            "-o",
+            str(tmp_path / "runs"),
+            "--quiet",
+        ]
+    )
+    assert code == EXIT_OK
+    out = capsys.readouterr().out
+    assert "# Run " in out
+    assert "called no provider" in out  # the first thing the report says
+
+    written = list((tmp_path / "runs").iterdir())
+    assert len(written) == 1
+    assert (written[0] / "run.json").is_file() and (written[0] / "run.md").is_file()
+    assert list((written[0] / "traces").iterdir())
+
+
+def test_a_real_run_without_a_key_stops_before_spending_anything(
+    suite_dir, monkeypatch, capsys
+):
+    from auto_eval import cli
+    from auto_eval.config import Settings
+
+    monkeypatch.setattr(
+        cli,
+        "get_settings",
+        lambda **kw: Settings(api_key=None, model="m", base_url=None),
+    )
+    assert main(["run", str(suite_dir), "--quiet"]) == 1
+    assert "no API key" in capsys.readouterr().err
+
+
+def test_runs_and_report_read_what_run_wrote(suite_dir, tmp_path, capsys):
+    main(
+        [
+            "run",
+            str(suite_dir),
+            "--mock",
+            "--samples",
+            "1",
+            "--limit",
+            "2",
+            "-o",
+            str(tmp_path / "runs"),
+            "--quiet",
+            "--format",
+            "json",
+        ]
+    )
+    capsys.readouterr()
+
+    assert (
+        main(["runs", "--dir", str(tmp_path / "runs"), "--format", "json"]) == EXIT_OK
+    )
+    listed = json.loads(capsys.readouterr().out)
+    assert len(listed) == 1 and listed[0]["mock"] is True
+
+    assert main(["report", listed[0]["path"]]) == EXIT_OK
+    assert "What could not be checked" in capsys.readouterr().out
+
+
+def test_reporting_on_something_that_is_not_a_run_is_a_readable_error(tmp_path, capsys):
+    assert main(["report", str(tmp_path)]) == 1
+    assert "No run at" in capsys.readouterr().err
+
+
+def test_fresh_lists_ground_truth_the_model_cannot_have_seen(capsys):
+    assert main(["fresh", "--model", "gpt-5"]) == EXIT_OK
+    out = capsys.readouterr().out
+    assert "LiveCodeBench" in out and "held out" in out
+    assert "2024-09-30" in out  # the cutoff it was judged against
+
+
+def test_fresh_says_when_it_has_no_cutoff_on_file(capsys):
+    assert main(["fresh", "--model", "some-local-model"]) == EXIT_OK
+    captured = capsys.readouterr()
+    assert "No published cutoff on file" in captured.err
+    assert "nothing is judged post-cutoff" in captured.out

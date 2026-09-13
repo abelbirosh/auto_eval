@@ -33,7 +33,15 @@ def test_health_reports_key_and_model(client, monkeypatch):
         lambda **kw: Settings(api_key="k", model="m", base_url=None),
     )
     body = client.get("/api/health").json()
-    assert body == {"has_key": True, "model": "m"}
+    assert body == {
+        "has_key": True,
+        "model": "m",
+        # The dashboard shows these before a run is started, so a judge that is
+        # the same model as the one under test is visible up front.
+        "subject_model": "m",
+        "judge_model": "m",
+        "runs_dir": "runs",
+    }
 
 
 def test_classify_returns_spec_and_markdown(client, monkeypatch, sparse_spec):
@@ -262,3 +270,228 @@ def test_analysis_errors_become_readable_400s(client, monkeypatch, full_spec):
     )
     assert response.status_code == 400
     assert "Rate limited" in response.json()["detail"]
+
+
+# --- the run dashboard ----------------------------------------------------
+
+
+@pytest.fixture
+def written_suite(tmp_path, agent_spec):
+    from auto_eval.suite import build, write
+
+    suite = build(agent_spec)
+    write(suite, tmp_path / "suites" / suite.name)
+    return suite
+
+
+@pytest.fixture
+def written_run(tmp_path, written_suite, monkeypatch):
+    from auto_eval.provider import MockClient
+    from auto_eval.runner import run_suite, write_run
+
+    run = run_suite(written_suite, mock=True, samples=1, limit=3, client=MockClient())
+    write_run(run, tmp_path / "runs")
+    monkeypatch.setenv("AUTO_EVAL_RUNS_DIR", str(tmp_path / "runs"))
+    return run.report
+
+
+def test_the_dashboard_is_served(client):
+    response = client.get("/dashboard")
+    assert response.status_code == 200
+    assert "/api/runs" in response.text
+    # The page has to say what it could not check, not only what passed.
+    assert "What could not be checked" in response.text
+    assert "Contamination" in response.text
+
+
+def test_suites_are_listed_for_the_picker(client, tmp_path, written_suite):
+    body = client.get("/api/suites", params={"root": str(tmp_path)}).json()
+    assert [entry["name"] for entry in body] == [written_suite.name]
+    assert body[0]["cases"] == len(written_suite.cases)
+    assert body[0]["digest"] == written_suite.digest
+
+
+def test_a_directory_with_no_suites_is_empty_not_an_error(client, tmp_path):
+    (tmp_path / "empty").mkdir()
+    response = client.get("/api/suites", params={"root": str(tmp_path / "empty")})
+    assert response.status_code == 200 and response.json() == []
+
+
+def test_runs_are_listed_and_readable(client, written_run):
+    listed = client.get("/api/runs").json()
+    assert [entry["run_id"] for entry in listed] == [written_run.run_id]
+
+    body = client.get(f"/api/runs/{written_run.run_id}").json()
+    assert body["suite_digest"] == written_run.suite_digest
+    assert body["headline"]["pass_rate"] == written_run.headline.pass_rate
+    assert body["overall"]["checks"]["blocked"] > 0
+
+
+def test_a_run_can_be_read_as_a_document(client, written_run):
+    body = client.get(f"/api/runs/{written_run.run_id}/markdown").json()
+    assert f"# Run {written_run.run_id}" in body["markdown"]
+
+
+def test_the_trace_behind_a_verdict_is_served(client, written_run):
+    case = written_run.cases[0]
+    body = client.get(f"/api/runs/{written_run.run_id}/trace/{case.case_id}").json()
+    assert body["case_id"] == case.case_id
+    assert body["steps"]
+
+
+def test_a_run_id_that_is_not_one_is_refused(client, written_run):
+    assert client.get("/api/runs/..%2F..%2Fetc").status_code in (400, 404)
+    assert client.get("/api/runs/no-such-run").status_code == 404
+
+
+def test_a_run_can_be_started_and_polled(client, tmp_path, written_suite):
+    started = client.post(
+        "/api/run",
+        json={
+            "suite": str(tmp_path / "suites" / written_suite.name),
+            "mock": True,
+            "samples": 1,
+            "limit": 2,
+            "out": str(tmp_path / "runs"),
+        },
+    )
+    assert started.status_code == 200
+    job = started.json()
+    assert job["total"] == 2 and job["mock"] is True
+
+    for _ in range(200):
+        job = client.get(f"/api/run/{job['job_id']}").json()
+        if job["state"] != "running":
+            break
+    assert job["state"] == "done", job.get("error")
+    assert job["run_id"] and (tmp_path / "runs" / job["run_id"] / "run.json").exists()
+
+
+def test_starting_a_run_of_something_that_is_not_a_suite_is_a_readable_400(
+    client, tmp_path
+):
+    response = client.post(
+        "/api/run", json={"suite": str(tmp_path / "nothing"), "mock": True}
+    )
+    assert response.status_code == 400
+    assert "No suite at" in response.json()["detail"]
+
+
+def test_a_real_run_without_a_key_is_refused_before_it_starts(
+    client, tmp_path, written_suite, monkeypatch
+):
+    from auto_eval.config import Settings
+
+    monkeypatch.setattr(
+        web,
+        "get_settings",
+        lambda **kw: Settings(api_key=None, model="m", base_url=None),
+    )
+    response = client.post(
+        "/api/run",
+        json={"suite": str(tmp_path / "suites" / written_suite.name), "mock": False},
+    )
+    assert response.status_code == 400
+    assert "No API key" in response.json()["detail"]
+
+
+def test_an_unknown_job_is_a_404(client):
+    assert client.get("/api/run/nosuchjob").status_code == 404
+
+
+# --- the one-button path --------------------------------------------------
+
+
+def test_the_page_offers_the_benchmark_once_ground_truth_is_done(client):
+    page = client.get("/").text
+    assert "/api/benchmark" in page
+    assert "Run the benchmark" in page
+
+
+def test_a_benchmark_authors_the_suite_and_runs_it(client, tmp_path, agent_spec):
+    from auto_eval.gaps import analyze as settle
+
+    response = client.post(
+        "/api/benchmark",
+        json={
+            "spec": settle(agent_spec).model_dump(mode="json"),
+            "mock": True,
+            "samples": 1,
+            "limit": 2,
+            "suites_dir": str(tmp_path / "suites"),
+            "out": str(tmp_path / "runs"),
+        },
+    )
+    assert response.status_code == 200
+    job = response.json()
+    # The page can say what it is about to run before the first case comes back.
+    assert job["suite_name"] == "support-agent" and job["cases"] == 2
+    assert job["suite_digest"] and job["total"] == 2
+
+    for _ in range(200):
+        job = client.get(f"/api/run/{job['job_id']}").json()
+        if job["state"] != "running":
+            break
+    assert job["state"] == "done", job.get("error")
+
+    # Both halves are on disk: the suite it wrote, and the run it produced.
+    assert (tmp_path / "suites" / "support-agent" / "suite.json").is_file()
+    assert (tmp_path / "runs" / job["run_id"] / "run.json").is_file()
+
+    report = client.get(
+        f"/api/runs/{job['run_id']}", params={"dir": str(tmp_path / "runs")}
+    ).json()
+    assert report["suite_digest"] == job["suite_digest"]
+
+
+def test_a_closed_agent_gate_comes_back_as_a_question_not_an_error(
+    client, tmp_path, agent_spec
+):
+    """A suite written against an agent nobody can start is a document, not a test."""
+    from auto_eval.gaps import analyze as settle
+
+    agent_spec.subject.interface = None
+    agent_spec.evidence = []
+    body = {
+        "spec": settle(agent_spec).model_dump(mode="json"),
+        "mock": True,
+        "samples": 1,
+        "limit": 1,
+        "suites_dir": str(tmp_path / "suites"),
+        "out": str(tmp_path / "runs"),
+    }
+
+    refused = client.post("/api/benchmark", json=body)
+    assert refused.status_code == 409
+    assert "Not ready to author" in refused.json()["detail"]
+
+    forced = client.post("/api/benchmark", json={**body, "force": True})
+    assert forced.status_code == 200
+
+
+def test_a_benchmark_without_a_key_is_refused_before_the_suite_is_written(
+    client, tmp_path, agent_spec, monkeypatch
+):
+    from auto_eval.config import Settings
+    from auto_eval.gaps import analyze as settle
+
+    monkeypatch.setattr(
+        web,
+        "get_settings",
+        lambda **kw: Settings(api_key=None, model="m", base_url=None),
+    )
+    response = client.post(
+        "/api/benchmark",
+        json={
+            "spec": settle(agent_spec).model_dump(mode="json"),
+            "mock": False,
+            "suites_dir": str(tmp_path / "suites"),
+        },
+    )
+    assert response.status_code == 400
+    assert "No API key" in response.json()["detail"]
+    assert not (tmp_path / "suites").exists()
+
+
+def test_the_dashboard_can_be_linked_to_one_run(client):
+    assert "wantedRun" in client.get("/dashboard").text
