@@ -122,3 +122,10 @@ Describe the evaluation
 ```
 
 **Auto-Eval is infrastructure for turning evaluation questions into evidence.**
+
+## License
+
+[Apache 2.0](LICENSE). Use it, modify it, ship it in something commercial — the
+license also grants you a patent license from every contributor, and asks that
+you keep the notice and mark the files you changed. Contributions are accepted
+under the same terms.

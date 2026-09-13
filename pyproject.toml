@@ -1,5 +1,7 @@
 [build-system]
-requires = ["setuptools>=68"]
+# 77 is where setuptools learned the PEP 639 `license`/`license-files` fields
+# used below; older versions reject the SPDX string outright.
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,6 +9,8 @@ name = "auto-eval"
 version = "0.1.0"
 description = "Turn a free-form request into a structured evaluation task spec."
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
     "httpx>=0.28.1",       # fetching the sources the ground-truth block finds
