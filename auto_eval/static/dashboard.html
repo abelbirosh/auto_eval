@@ -60,8 +60,9 @@
   h2 {
     font-size: 11px; text-transform: uppercase; letter-spacing: .14em;
     color: var(--muted); font-weight: 700;
-    margin: 40px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--rule);
+    margin: 36px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--rule);
   }
+  h2 .why { text-transform: none; letter-spacing: 0; font-weight: 400; margin-left: 8px; }
   h3 { font-size: 15px; font-weight: 600; margin: 0 0 6px; }
 
   table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
@@ -148,10 +149,10 @@
     <span class="meta" id="meta"></span>
   </header>
   <p class="sub">
-    Every case in a suite, run against the provider API and scored by its own checks.
-    Tools are declared to the model and answered inside the harness, so no run touches a
-    live system &mdash; which is also why the checks that need a real environment are
-    reported as blocked rather than guessed at. <a href="/">Back to the classifier</a>.
+    Every case in a suite, run against the provider and scored by its own checks. Tools are
+    answered inside the harness, so nothing touches a live system &mdash; and the checks that
+    need a real environment are reported as blocked, not guessed at.
+    <a href="/">Back to the classifier</a>.
   </p>
 
   <div id="banner"></div>
@@ -260,6 +261,10 @@ async function loadSuites() {
   }
 }
 
+function wantedRun() {
+  return new URLSearchParams(location.search).get("run");
+}
+
 async function loadRuns(select) {
   let runs = [];
   try {
@@ -288,7 +293,9 @@ async function loadRuns(select) {
   $("runs").querySelectorAll("tr.pick").forEach(row => {
     row.onclick = () => showRun(row.dataset.run);
   });
-  await showRun(select || runs[0].run_id);
+  const asked = select || wantedRun();
+  const known = runs.some(r => r.run_id === asked);
+  await showRun(known ? asked : runs[0].run_id);
 }
 
 async function showRun(runId) {
@@ -390,14 +397,13 @@ function blockedTable(r) {
 
 function contaminationPanel(c) {
   if (!c) return "";
-  return `<h2>Contamination</h2>
+  return `<h2>Contamination
+      <span class="why">${esc(FRESHNESS[c.verdict] || "")}</span></h2>
     <p><span class="badge ${esc(c.verdict)}">${words(c.verdict)}</span>
-      &nbsp;${esc(FRESHNESS[c.verdict] || "")}</p>
-    <p class="why">Cutoff for <code>${esc(c.model)}</code>:
-      ${c.cutoff ? esc(c.cutoff) : '<span class="none">not on file</span>'}
-      ${c.cutoff_source ? `&middot; <a href="${esc(c.cutoff_source)}" target="_blank" rel="noopener noreferrer">source</a>` : ""}
-      &middot; ${c.clean_cases} case(s) the model cannot have seen, ${c.unknown_cases} unknown,
-      ${c.at_risk_cases} at risk</p>
+      <span class="why">&nbsp;${c.clean_cases} clean &middot; ${c.unknown_cases} unknown &middot;
+      ${c.at_risk_cases} at risk &middot; cutoff for <code>${esc(c.model)}</code>
+      ${c.cutoff ? esc(c.cutoff) : "not on file"}${
+        c.cutoff_source ? ` (<a href="${esc(c.cutoff_source)}" target="_blank" rel="noopener noreferrer">source</a>)` : ""}</span></p>
     <table>
       <tr><th>Origin</th><th class="num">Cases</th><th>Verdict</th><th>Why</th></tr>
       ${c.by_origin.map(o => `<tr>
@@ -461,15 +467,14 @@ function renderReport() {
 
     ${figures(r)}
 
-    ${r.warnings.length ? `<h2>Read this first</h2>${list(r.warnings, "")}` : ""}
+    ${r.warnings.length
+      ? `<details open><summary>${r.warnings.length} thing(s) to read before quoting a number</summary>${list(r.warnings, "")}</details>`
+      : ""}
 
-    <h2>The numbers</h2>
-    <p class="why">A run passes a case only when every check that ran on it passed. Blocked
-      checks count neither way.</p>
+    <h2>Scores <span class="why">a case passes only when every check that ran on it passed</span></h2>
     <div class="scroll">${splitTable(r)}</div>
 
-    <h2>By KPI</h2>
-    <p class="why">A KPI with nothing settled is one this run did not measure, whatever the case count says.</p>
+    <h2>By KPI <span class="why">nothing settled means this run did not measure it</span></h2>
     <div class="scroll">${groupTable(r.by_kpi, "KPI")}</div>
 
     <h2>By check kind</h2>
@@ -480,12 +485,12 @@ function renderReport() {
 
     ${contaminationPanel(r.contamination)}
 
-    <h2>Cases</h2>
-    <p class="why">Click a case to see every verdict and the span it was read off.</p>
+    <h2>Cases <span class="why">click one for every verdict and the span it was read off</span></h2>
     <div class="scroll">${caseTable(r)}</div>
 
-    <details><summary>By behaviour</summary><div class="scroll">${groupTable(r.by_behaviour, "Behaviour")}</div></details>
-    <details><summary>By family</summary><div class="scroll">${groupTable(r.by_family, "Family")}</div></details>
+    <details><summary>By behaviour, and by family</summary>
+      <div class="scroll">${groupTable(r.by_behaviour, "Behaviour")}</div>
+      <div class="scroll">${groupTable(r.by_family, "Family")}</div></details>
     <details><summary>Notes</summary>${list(r.notes, "none")}</details>
     <details><summary>Report as markdown</summary><pre id="md">loading&hellip;</pre></details>
     <details><summary>Raw JSON</summary><pre>${esc(JSON.stringify(r, null, 2))}</pre></details>`;

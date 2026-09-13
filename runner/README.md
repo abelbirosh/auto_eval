@@ -90,13 +90,38 @@ runs/<suite>-<timestamp>/
 traced back to the exact cases that produced it, and the report says outright
 when the suite no longer hashes to its own digest.
 
+## From the page
+
+The classifier page carries the pipeline to the end. Once the ground-truth stage
+is done it offers **Run the benchmark**, which posts the spec to
+`POST /api/benchmark`: that authors the suite inline — deterministic and offline,
+so there is nothing to wait for — writes it to `suites/<name>/`, and starts the
+run as a background job the page polls. Authoring and running are not two
+decisions, so they are not two buttons.
+
+A closed agent gate comes back as a `409` with its reason rather than an error,
+and the page turns it into a question with a *write it anyway* button next to it.
+The result renders in tables under the ground-truth section and links through to
+`/dashboard?run=<run-id>`.
+
+| | |
+| --- | --- |
+| `POST /api/benchmark` | spec → suite → run, returns a job |
+| `POST /api/run` | run a suite already on disk, returns a job |
+| `GET /api/run/{job}` | progress: done, total, the case in flight |
+| `GET /api/runs` | every run on disk, newest first |
+| `GET /api/runs/{id}` | one report; `/markdown` for the document |
+| `GET /api/runs/{id}/trace/{case}?sample=` | what a verdict was read off |
+| `GET /api/suites` | the suites the picker offers |
+
 ## The dashboard
 
 `auto-eval serve`, then `/dashboard`. It lists the runs on disk, shows one in
 full — the held-out number, what settled, what could not be checked, the
 contamination verdict, then every case — and opens each case down to the
 individual verdicts and the trace they were read off. It can also start a run:
-pick a suite, a model, samples, and watch it go.
+pick a suite, a model, samples, and watch it go. `?run=<run-id>` opens straight
+onto one.
 
 Local only, like the rest of the UI: no authentication, and the key never leaves
 the machine.

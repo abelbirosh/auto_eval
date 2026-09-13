@@ -54,10 +54,21 @@ auto-eval report runs/support-agent-20260912-174501
 ```
 
 A run writes `runs/<run-id>/run.json`, the same report as a document, and one
-trace per run — the transcript each verdict was read off. `auto-eval serve` then
-serves the dashboard at `/dashboard`: the runs on disk, one of them in full, and
-every case openable down to the individual verdicts and their traces. It can
-start runs too. Local only, no authentication.
+trace per run — the transcript each verdict was read off.
+
+## The whole pipeline from the page
+
+`auto-eval serve` and everything after the request is buttons. Type the request,
+answer whatever blocks, find the ground truth, and the page then offers **Run the
+benchmark**: one click writes the suite for that spec and runs every case, with
+progress as it goes and the scores in tables underneath — held-out rate, per-KPI,
+what could not be checked, the cases that did not pass, the contamination
+verdict. There is nothing to decide between authoring and running, so there is
+nothing to click between them either. A dry run needs no key at all.
+
+Each result links through to `/dashboard?run=<run-id>`, which holds the same run
+in full: every verdict, and the transcript it was read off. The dashboard also
+lists every run on disk and can start its own. Local only, no authentication.
 
 ## Ground truth the model has not already seen
 
