@@ -1011,9 +1011,13 @@ def render_round(this_round: Round) -> str:
 
     ceiling = this_round.saturated_rows
     lines.append(
-        "**At 100%:** "
+        f"**At or above the {this_round.threshold:.0%} ceiling:** "
         + (", ".join(ceiling) if ceiling else "_nothing - the board separates_")
     )
+    if this_round.threshold < 1.0:
+        perfect = this_round.perfect_rows
+        lines.append("")
+        lines.append("**At 100%:** " + (", ".join(perfect) if perfect else "_nothing_"))
     everywhere = this_round.saturated_items
     lines.append("")
     lines.append(

@@ -15,6 +15,12 @@ Three rules the adapter keeps:
 * **A failure is recorded, not scored.** A timeout or a 500 comes back as an
   error on that item; the board reports the error rate beside the accuracy
   rather than folding a vendor's outage into its quality.
+* **A rate limit is waited out, not recorded.** A 429 says *ask me again later*,
+  not *I could not answer* - and an item dropped to one shrinks the denominator
+  the row's accuracy is computed over, which is how a vendor ends up reported at
+  100% on the three items that got through. So it is retried with a backoff,
+  `Retry-After` honoured when the vendor sends one, and only a rate limit that
+  survives every attempt becomes an error.
 """
 
 from __future__ import annotations
@@ -23,7 +29,7 @@ import json
 import os
 import re
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -38,6 +44,23 @@ MAX_SNIPPET_CHARS = 2000
 # Results past this rank are dropped: no board here scores beyond the first page,
 # and keeping them only inflates the stored board.
 MAX_HITS = 20
+
+# Statuses that mean "later", not "no": a rate limit and the back-pressure codes
+# vendors put in front of one.
+RETRY_STATUSES = frozenset({429, 502, 503, 504})
+
+# Attempts after the first, and how long to wait between them. The sizing is not
+# arbitrary: these vendors meter per minute - "Consumed (req/min): 17, Remaining:
+# 0" - so a backoff that tops out in seconds never reaches the window it is
+# waiting for. 2s doubling over five attempts spans just past a minute, which is
+# the quota it has to outlast.
+MAX_RETRIES = 5
+BACKOFF_SECONDS = 2.0
+MAX_BACKOFF_SECONDS = 32.0
+
+# A vendor that sends `Retry-After` knows better than the doubling does, and a
+# per-minute window is worth waiting out, so this is honoured up to a minute.
+MAX_RETRY_AFTER_SECONDS = 60.0
 
 
 class EndpointError(ClassifierError):
@@ -65,6 +88,9 @@ class Response(BaseModel):
     error: Optional[str] = None
     characters: int = Field(
         default=0, description="Size of the response body, as a rough token proxy."
+    )
+    retries: int = Field(
+        default=0, description="Attempts spent waiting out a rate limit."
     )
 
     @property
@@ -162,7 +188,33 @@ def parse_hits(payload: Any, endpoint: Endpoint) -> List[Hit]:
     return hits
 
 
-def call(endpoint: Endpoint, query: str, *, client: Optional[Any] = None) -> Response:
+def _wait_for(response: Any, attempt: int) -> float:
+    """How long to wait before retrying: the vendor's answer, or a doubling one.
+
+    `Retry-After` is what the vendor asked for and beats a guess. A header asking
+    for longer than a minute is refused and the backoff used instead: past that
+    the row should fail honestly rather than hold a board open.
+    """
+    header = ""
+    try:
+        header = (response.headers or {}).get("retry-after", "") or ""
+    except Exception:  # a transport whose headers are not a mapping
+        header = ""
+    try:
+        asked = float(str(header).strip())
+    except ValueError:
+        asked = 0.0
+    backoff = min(BACKOFF_SECONDS * (2**attempt), MAX_BACKOFF_SECONDS)
+    return asked if 0 < asked <= MAX_RETRY_AFTER_SECONDS else backoff
+
+
+def call(
+    endpoint: Endpoint,
+    query: str,
+    *,
+    client: Optional[Any] = None,
+    sleep: Callable[[float], None] = time.sleep,
+) -> Response:
     """Call `endpoint` with one query. Never raises for a bad response.
 
     When no client is passed this module opens the address itself, so it checks
@@ -190,49 +242,68 @@ def call(endpoint: Endpoint, query: str, *, client: Optional[Any] = None) -> Res
             raise EndpointError("Calling an endpoint needs httpx.") from exc
         client = httpx.Client(timeout=endpoint.timeout_s, follow_redirects=True)
 
-    started = time.monotonic()
-    try:
-        request: Dict[str, Any] = {"headers": headers}
-        if params:
-            request["params"] = params
-        if endpoint.method.upper() == "GET":
-            response = client.get(endpoint.url, **request)
-        else:
-            response = client.post(endpoint.url, json=body, **request)
-        elapsed = round(time.monotonic() - started, 3)
-        text = response.text
-        if response.status_code >= 400:
-            return Response(
-                seconds=elapsed,
-                status=response.status_code,
-                characters=len(text),
-                error=f"HTTP {response.status_code}: {text[:200]}",
-            )
+    request: Dict[str, Any] = {"headers": headers}
+    if params:
+        request["params"] = params
+
+    for attempt in range(MAX_RETRIES + 1):
+        # Timed per attempt, so the wait between two of them is not reported as
+        # the vendor being slow. What is measured is the call that answered.
+        started = time.monotonic()
         try:
-            payload = response.json()
-        except ValueError:
+            if endpoint.method.upper() == "GET":
+                response = client.get(endpoint.url, **request)
+            else:
+                response = client.post(endpoint.url, json=body, **request)
+            elapsed = round(time.monotonic() - started, 3)
+            text = response.text
+
+            if response.status_code in RETRY_STATUSES and attempt < MAX_RETRIES:
+                sleep(_wait_for(response, attempt))
+                continue
+
+            if response.status_code >= 400:
+                return Response(
+                    seconds=elapsed,
+                    status=response.status_code,
+                    characters=len(text),
+                    retries=attempt,
+                    error=f"HTTP {response.status_code}: {text[:200]}",
+                )
+            try:
+                payload = response.json()
+            except ValueError:
+                return Response(
+                    seconds=elapsed,
+                    status=response.status_code,
+                    characters=len(text),
+                    retries=attempt,
+                    error="The response was not JSON.",
+                )
             return Response(
+                hits=parse_hits(payload, endpoint),
                 seconds=elapsed,
                 status=response.status_code,
                 characters=len(text),
-                error="The response was not JSON.",
+                retries=attempt,
             )
-        return Response(
-            hits=parse_hits(payload, endpoint),
-            seconds=elapsed,
-            status=response.status_code,
-            characters=len(text),
-        )
-    except Exception as exc:  # timeouts, DNS, resets - recorded, not scored
-        return Response(
-            seconds=round(time.monotonic() - started, 3),
-            error=f"{type(exc).__name__}: {exc}",
-        )
+        except Exception as exc:  # timeouts, DNS, resets - recorded, not scored
+            return Response(
+                seconds=round(time.monotonic() - started, 3),
+                retries=attempt,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+
+    # Unreachable: the last attempt always returns above.
+    return Response(retries=MAX_RETRIES, error="Rate limited on every attempt.")
 
 
 __all__ = [
+    "MAX_BACKOFF_SECONDS",
     "MAX_HITS",
+    "MAX_RETRIES",
     "MAX_SNIPPET_CHARS",
+    "RETRY_STATUSES",
     "EndpointError",
     "Hit",
     "Response",

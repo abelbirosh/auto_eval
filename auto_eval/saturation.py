@@ -33,6 +33,7 @@ when it runs out of rounds. It never stops because it decided it was finished.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -91,6 +92,9 @@ you write it in `answers`.
 - `answers` lists every wording that should count as correct - the bare value and \
 the value with its unit, for instance. Do not pad it with near-misses that are \
 not the answer.
+- Never answer with a machine identifier - a UUID, a hash, a build id. An exact \
+rare string is the one thing full-text search never misses, so it makes the item \
+easier, not harder. Ask for a fact a person would care about.
 - Keep the question to one sentence. It is a query someone will type.
 
 `note` is one line for the suite's author: what makes this one hard, and what \
@@ -181,6 +185,9 @@ class Round(BaseModel):
     board_id: str = ""
     dataset_digest: str = ""
     items: int = 0
+    threshold: float = Field(
+        default=SATURATED, description="The ceiling this round was run against."
+    )
 
     rows: List[RowScore] = Field(default_factory=list)
     item_scores: List[ItemScore] = Field(default_factory=list)
@@ -191,10 +198,24 @@ class Round(BaseModel):
 
     @property
     def saturated_rows(self) -> List[str]:
+        """Rows at or above this round's ceiling - what the loop is working on."""
         return [
             r.label
             for r in self.rows
-            if r.accuracy is not None and r.accuracy >= SATURATED
+            if r.kind is not SystemKind.MODEL_ONLY
+            and r.accuracy is not None
+            and r.accuracy >= self.threshold
+        ]
+
+    @property
+    def perfect_rows(self) -> List[str]:
+        """Rows that got literally everything right, whatever the ceiling is."""
+        return [
+            r.label
+            for r in self.rows
+            if r.kind is not SystemKind.MODEL_ONLY
+            and r.accuracy is not None
+            and r.accuracy >= SATURATED
         ]
 
     @property
@@ -346,6 +367,31 @@ def _propose(
     return parsed
 
 
+def _is_identifier(answer: str) -> bool:
+    """Whether this is a machine identifier rather than a fact worth asking for.
+
+    The verifier can only tell that an answer is *real* - it found the string on
+    the page. It cannot tell that the question is worth asking, and the first
+    run of this loop proved the difference: handed a benchmark's home page, the
+    model replaced *how many tasks does it contain* with *what is the GUID shown
+    on the page*. The GUID was genuinely there, so every check passed, and the
+    item got easier rather than harder - an exact rare string is the one thing
+    full-text search never misses.
+
+    So the shapes that are never facts are refused by rule: UUIDs, long hex
+    digests, and bare tokens that are mostly punctuation or hex with nothing a
+    reader would recognise as a word.
+    """
+    text = answer.strip()
+    if not text:
+        return False
+    if re.search(
+        r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", text, re.I
+    ):
+        return True
+    return bool(re.search(r"\b[0-9a-f]{16,}\b", text, re.I))
+
+
 def _check(proposal: Proposal, item: Item, source: str) -> Optional[str]:
     """Why this proposal cannot be accepted, or None when it can be.
 
@@ -369,6 +415,9 @@ def _check(proposal: Proposal, item: Item, source: str) -> Optional[str]:
         for old in item.answers
     ):
         return "the answer is the one the item already had"
+    opaque = next((answer for answer in answers if _is_identifier(answer)), None)
+    if opaque:
+        return f"the answer is an identifier rather than a fact: {opaque[:40]}"
     missing = [answer for answer in answers if not contains(source, answer)]
     if missing:
         return f"not in the source: {', '.join(missing[:3])}"
@@ -455,10 +504,13 @@ BoardRunner = Callable[..., Board]
 Announce = Callable[[Round, Board], None]
 
 
-def _round_from(board: Board, index: int, started: str) -> Round:
+def _round_from(
+    board: Board, index: int, started: str, threshold: float = SATURATED
+) -> Round:
     return Round(
         index=index,
         started_at=started,
+        threshold=threshold,
         board_id=board.board_id,
         dataset_digest=board.dataset_digest,
         items=board.items,
@@ -508,7 +560,7 @@ def run_loop(
         if boards_dir is not None:
             write_board(board, boards_dir)
 
-        this_round = _round_from(board, index, began)
+        this_round = _round_from(board, index, began, threshold)
         report.rounds.append(this_round)
         if announce:
             announce(this_round, board)
